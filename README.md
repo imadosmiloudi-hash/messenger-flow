@@ -56,7 +56,8 @@ Exact required permissions can vary with Meta product changes — follow the cur
 ## Stack
 
 - **Backend:** Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Redis + RQ, httpx, JWT auth
-- **Frontend:** Next.js 14 App Router, TypeScript, mobile-first CSS, PWA manifest + service worker
+- **Operator UI (production):** Static mobile-first PWA served by FastAPI from `backend/app/static/` (no Node build)
+- **Frontend (optional / local):** Next.js 14 App Router still in `frontend/` for local dual-port development
 - **DB:** SQLite by default (`sqlite:///./data/app.db`); Postgres via `DATABASE_URL` in Docker Compose
 
 ## Project layout
@@ -66,8 +67,8 @@ messenger-flow/
   README.md
   .env.example
   docker-compose.yml
-  backend/          # FastAPI API + RQ worker
-  frontend/         # Next.js PWA
+  backend/          # FastAPI API + RQ worker + static operator PWA (app/static)
+  frontend/         # Next.js PWA (kept for local/dev; not required on Railway)
   scripts/          # seed_admin.py, setup_dev.sh
 ```
 
@@ -121,6 +122,17 @@ APP_ENV=test pytest -q
 7. Watch status (queued/running). If something fails (token, 24h window, media URL), fix and **Retry**.
 
 ## Production notes
+
+### Railway / single-service operator UI
+
+**Production on Railway serves the operator PWA from the FastAPI backend** (`backend/app/static/`), not the Next.js `frontend/` app. Open:
+
+`https://api-production-22f23.up.railway.app/`
+
+(or your Railway API public URL). Log in, then use Dashboard / Inbox / Flows / Settings. Same-origin relative `/api/*` calls — no separate frontend service or Node build on the Metal builder.
+
+The Next.js app in `frontend/` remains in the repo for optional local development (`npm run dev` on :3000 talking to the API). Prefer the static UI on Railway until the frontend build is restored.
+
 
 - Use Postgres (`DATABASE_URL`) and managed Redis.
 - Set a strong `SECRET_KEY`, rotate Page tokens, restrict CORS.
