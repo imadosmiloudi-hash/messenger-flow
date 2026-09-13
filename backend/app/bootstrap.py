@@ -58,14 +58,32 @@ def _ensure_page_provider_column() -> None:
 
 
 def ensure_admin(db: Session) -> User:
+    """Create or sync the operator admin from ADMIN_EMAIL / ADMIN_PASSWORD."""
     settings = get_settings()
     email = settings.admin_email.lower().strip()
+    password_hash = get_password_hash(settings.admin_password)
+
     user = db.query(User).filter(User.email == email).first()
     if user:
+        user.hashed_password = password_hash
+        user.is_active = True
+        user.is_admin = True
+        db.flush()
         return user
+
+    # Migrate the original bootstrap admin email if still present
+    legacy = db.query(User).filter(User.email == "admin@example.com").first()
+    if legacy:
+        legacy.email = email
+        legacy.hashed_password = password_hash
+        legacy.is_active = True
+        legacy.is_admin = True
+        db.flush()
+        return legacy
+
     user = User(
         email=email,
-        hashed_password=get_password_hash(settings.admin_password),
+        hashed_password=password_hash,
         is_active=True,
         is_admin=True,
     )
