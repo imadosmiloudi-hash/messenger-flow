@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, joinedload
 
+from app.config import get_settings
 from app.models.entities import (
     AuditLog,
     Customer,
@@ -24,8 +25,17 @@ ACTIVE_STATUSES = (ExecutionStatus.QUEUED, ExecutionStatus.RUNNING)
 
 def get_connected_page(db: Session) -> Page:
     page = db.query(Page).filter(Page.is_connected.is_(True)).first()
-    if not page or not page.access_token:
-        raise HTTPException(status_code=400, detail="No connected Meta page. Connect a page first.")
+    if not page:
+        raise HTTPException(status_code=400, detail="No connected page. Connect a page first.")
+    settings = get_settings()
+    # Composio path: Page access token optional
+    if settings.uses_composio() or (page.provider or "").lower() == "composio":
+        return page
+    if not page.access_token:
+        raise HTTPException(
+            status_code=400,
+            detail="No connected Meta page token. Connect a page or configure Composio.",
+        )
     return page
 
 

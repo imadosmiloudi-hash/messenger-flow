@@ -71,6 +71,8 @@ def health():
         "ok": True,
         "webhook_auto_reply": False,
         "meta_api_version": settings.meta_graph_api_version,
+        "messaging_provider": settings.messaging_provider,
+        "composio_configured": bool(settings.composio_api_key),
     }
 
 

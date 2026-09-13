@@ -38,7 +38,8 @@ class UserOut(ORMModel):
 class PageConnectRequest(BaseModel):
     page_id: str
     name: str = ""
-    access_token: str
+    access_token: str = ""  # optional when provider=composio
+    provider: str = "meta"  # meta|composio
 
 
 class PageOut(ORMModel):
@@ -48,8 +49,19 @@ class PageOut(ORMModel):
     is_connected: bool
     connected_at: datetime | None
     last_error: str | None
+    provider: str = "meta"
     # Never expose full token
     has_token: bool = False
+
+
+class InboxSyncOut(BaseModel):
+    ok: bool = True
+    page_id: str
+    conversations_upserted: int = 0
+    messages_upserted: int = 0
+    provider: str = "composio"
+    synced_at: datetime | None = None
+    error: str | None = None
 
 
 # Inbox
@@ -202,6 +214,9 @@ class PublicSettingsOut(BaseModel):
     public_base_url: str
     webhook_url: str
     webhook_never_auto_replies: bool = True
+    messaging_provider: str = "meta"
+    composio_configured: bool = False
+    meta_page_id_default: str = ""
 
 
 class EventPayload(BaseModel):

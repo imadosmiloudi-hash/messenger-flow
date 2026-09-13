@@ -220,17 +220,36 @@
 
   async function viewInbox() {
     let rows = [];
+    let syncStatus = null;
     let error = "";
     try {
       rows = await api("/api/inbox");
+      try {
+        syncStatus = await api("/api/inbox/sync");
+      } catch (_) {
+        syncStatus = null;
+      }
     } catch (e) {
       error = e.message;
     }
+    const syncLine = syncStatus
+      ? (syncStatus.error
+          ? `Last sync failed: ${esc(syncStatus.error)}`
+          : syncStatus.synced_at
+            ? `Last sync: ${fmtTime(syncStatus.synced_at)} · ${esc(String(syncStatus.conversations_upserted || 0))} conversations`
+            : "Not synced yet via Composio")
+      : "";
     const inner = `
       ${error ? `<div class="err-box">${esc(error)}</div>` : ""}
+      <div id="inbox-sync-msg" class="ok-box hidden"></div>
+      <div id="inbox-sync-err" class="err-box hidden"></div>
       <div class="card">
-        <h2>Inbox</h2>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+          <h2 style="margin:0">Inbox</h2>
+          <button type="button" class="btn secondary" id="inbox-sync-btn">Sync</button>
+        </div>
         <p class="muted">Tap a conversation, then SEND FLOW. Webhook never auto-replies.</p>
+        ${syncLine ? `<p class="muted" id="inbox-sync-status">${syncLine}</p>` : `<p class="muted" id="inbox-sync-status">Sync pulls conversations via Composio.</p>`}
         ${rows.length === 0 && !error ? `<p class="muted">No conversations yet.</p>` : ""}
         ${rows.map((c) => {
           const name = c.customer?.display_name || c.customer?.psid || "Customer";
@@ -243,6 +262,44 @@
       </div>
     `;
     return shell(inner, { title: "Inbox" });
+  }
+
+  function bindInbox() {
+    document.getElementById("inbox-sync-btn")?.addEventListener("click", async () => {
+      const btn = document.getElementById("inbox-sync-btn");
+      const msg = document.getElementById("inbox-sync-msg");
+      const err = document.getElementById("inbox-sync-err");
+      const statusEl = document.getElementById("inbox-sync-status");
+      msg?.classList.add("hidden");
+      err?.classList.add("hidden");
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Syncing…";
+      }
+      try {
+        const data = await api("/api/inbox/sync", { method: "POST" });
+        if (msg) {
+          msg.textContent = `Synced ${data.conversations_upserted || 0} conversations`;
+          msg.classList.remove("hidden");
+        }
+        if (statusEl) {
+          statusEl.textContent = data.error
+            ? `Last sync failed: ${data.error}`
+            : `Last sync: ${fmtTime(data.synced_at)} · ${data.conversations_upserted || 0} conversations`;
+        }
+        render();
+      } catch (ex) {
+        if (err) {
+          err.textContent = ex.message || "Sync failed";
+          err.classList.remove("hidden");
+        }
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "Sync";
+        }
+      }
+    });
   }
 
   async function viewConversation(id) {
@@ -545,8 +602,8 @@
     } catch (e) {
       error = e.message;
     }
-    // Also show client-side webhook hint from current origin if settings missing public_base_url
     const originHint = `${location.origin}/webhook`;
+    const defaultPageId = settings?.meta_page_id_default || "106896232178599";
     const inner = `
       ${error ? `<div class="err-box">${esc(error)}</div>` : ""}
       <div id="settings-msg" class="ok-box hidden"></div>
@@ -559,6 +616,7 @@
           <p class="muted" style="margin-top:8px">Verify token hint: ${esc(settings.meta_verify_token_hint)}</p>
           <p class="muted">API version: ${esc(settings.meta_graph_api_version)}</p>
           <p class="muted">PUBLIC_BASE_URL: ${esc(settings.public_base_url)}</p>
+          <p class="muted">Messaging provider: ${esc(settings.messaging_provider || "meta")}${settings.composio_configured ? " · Composio configured" : ""}</p>
           <p><span class="badge ok">webhook_never_auto_replies = ${esc(String(settings.webhook_never_auto_replies))}</span></p>
         ` : `
           <p class="muted">Callback URL (this origin)</p>
@@ -566,15 +624,20 @@
         `}
       </div>
       <div class="card">
-        <h2>Connect Page (manual token)</h2>
+        <h2>Connect via Composio</h2>
+        <p class="muted">Uses COMPOSIO_* env. No Meta page token required. Default page: IMADS Agency (${esc(defaultPageId)}).</p>
+        <button type="button" class="btn" id="connect-composio-btn">Connect via Composio</button>
+      </div>
+      <div class="card">
+        <h2>Connect Page (manual / Meta token)</h2>
         ${page?.is_connected
-          ? `<p><span class="badge ok">Connected</span> ${esc(page.name)} (${esc(page.page_id)})</p>
+          ? `<p><span class="badge ok">Connected</span> ${esc(page.name)} (${esc(page.page_id)}) · ${esc(page.provider || "meta")}</p>
              ${page.last_error ? `<p class="muted">Last error: ${esc(page.last_error)}</p>` : ""}`
           : `<p><span class="badge warn">Not connected</span></p>`}
         <form id="connect-form">
-          <input class="input" name="page_id" placeholder="Page ID" required value="${esc(page?.page_id || "")}" />
-          <input class="input" name="name" placeholder="Page name (optional)" value="${esc(page?.name || "")}" />
-          <input class="input" name="access_token" placeholder="Page access token" required autocomplete="off" />
+          <input class="input" name="page_id" placeholder="Page ID" required value="${esc(page?.page_id || defaultPageId)}" />
+          <input class="input" name="name" placeholder="Page name (optional)" value="${esc(page?.name || "IMADS Agency")}" />
+          <input class="input" name="access_token" placeholder="Page access token (optional for Composio)" autocomplete="off" />
           <button class="btn" type="submit">Connect</button>
         </form>
         ${page?.is_connected ? `<button class="btn secondary" id="disconnect-btn" style="margin-top:8px">Disconnect</button>` : ""}
@@ -592,16 +655,33 @@
       const err = document.getElementById("settings-err");
       msg.classList.add("hidden");
       err.classList.add("hidden");
+      const token = String(fd.get("access_token") || "").trim();
       try {
         await api("/api/pages/connect", {
           method: "POST",
           body: JSON.stringify({
             page_id: String(fd.get("page_id") || "").trim(),
             name: String(fd.get("name") || "").trim(),
-            access_token: String(fd.get("access_token") || "").trim(),
+            access_token: token,
+            provider: token ? "meta" : "composio",
           }),
         });
         msg.textContent = "Page connected";
+        msg.classList.remove("hidden");
+        render();
+      } catch (ex) {
+        err.textContent = ex.message;
+        err.classList.remove("hidden");
+      }
+    });
+    document.getElementById("connect-composio-btn")?.addEventListener("click", async () => {
+      const msg = document.getElementById("settings-msg");
+      const err = document.getElementById("settings-err");
+      msg.classList.add("hidden");
+      err.classList.add("hidden");
+      try {
+        await api("/api/pages/connect-composio", { method: "POST" });
+        msg.textContent = "Connected via Composio (IMADS Agency)";
         msg.classList.remove("hidden");
         render();
       } catch (ex) {
@@ -680,6 +760,7 @@
     });
 
     if (route.name === "login") bindLogin();
+    if (route.name === "inbox") bindInbox();
     if (route.name === "conversation") bindConversation();
     if (route.name === "flows") bindFlows();
     if (route.name === "flow") bindFlow(route.id);

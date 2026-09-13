@@ -51,6 +51,7 @@ def dashboard(db: Session = Depends(get_db), user: User = Depends(get_current_us
             is_connected=page.is_connected,
             connected_at=page.connected_at,
             last_error=page.last_error,
+            provider=getattr(page, "provider", None) or "meta",
             has_token=bool(page.access_token),
         )
     unread = db.query(Conversation).with_entities(Conversation.unread_count).all()
@@ -94,4 +95,7 @@ def public_settings(user: User = Depends(get_current_user)):
         public_base_url=base,
         webhook_url=f"{base}/webhook",
         webhook_never_auto_replies=True,
+        messaging_provider=settings.messaging_provider or "meta",
+        composio_configured=bool(settings.composio_api_key),
+        meta_page_id_default=settings.meta_page_id or "106896232178599",
     )

@@ -1,6 +1,6 @@
 # Messenger Flow Operator
 
-Production-oriented **operator console** for sending sequenced Messenger messages (text / image / audio / video) using the **official Meta Graph API only**.
+Production-oriented **operator console** for sending sequenced Messenger messages (text / image / audio / video). Sends via **Composio** (preferred when configured) or the **official Meta Graph API** fallback.
 
 > **Native Messenger custom “SEND FLOW” button is NOT possible.**  
 > Meta Messenger does not allow third-party apps to inject custom action buttons into the native Messenger UI for page operators. This project ships a **mobile-first installable PWA** operator console instead. Operators open conversations in the PWA and tap a large **SEND FLOW** button.
@@ -52,6 +52,20 @@ Production-oriented **operator console** for sending sequenced Messenger message
 - Advanced/optional depending on product: `pages_messaging_subscriptions`
 
 Exact required permissions can vary with Meta product changes — follow the current Messenger Platform docs for Graph **v26.0**.
+
+## Composio hybrid messaging
+
+When `MESSAGING_PROVIDER=composio` (default) and `COMPOSIO_API_KEY` is set, SEND FLOW and inbox sync use Composio tools against the connected Facebook account (`COMPOSIO_CONNECTED_ACCOUNT_ID`, e.g. `facebook_alvar-therm`):
+
+- Text: `FACEBOOK_SEND_MESSAGE`
+- Image / audio / video: `FACEBOOK_SEND_MEDIA_MESSAGE`
+- Inbox sync: `FACEBOOK_GET_PAGE_CONVERSATIONS` (+ optional `FACEBOOK_GET_CONVERSATION_MESSAGES`)
+
+Set `MESSAGING_PROVIDER=meta` to force the direct Graph API path with a Page access token. Webhooks still never auto-reply — only authenticated **SEND FLOW** sends.
+
+Default Page for Composio mode: **IMADS Agency** (`META_PAGE_ID=106896232178599`). Settings → **Connect via Composio** needs no Meta page token. Inbox → **Sync** pulls conversations into the operator UI.
+
+Required env (see `.env.example`): `COMPOSIO_API_KEY`, `COMPOSIO_CONNECTED_ACCOUNT_ID`, `COMPOSIO_USER_ID`, `MESSAGING_PROVIDER`, `META_PAGE_ID`.
 
 ## Stack
 
@@ -151,6 +165,8 @@ The Next.js app in `frontend/` remains in the repo for optional local developmen
 | GET | `/api/auth/me` | ✓ | |
 | GET/POST | `/api/pages/status\|connect\|disconnect` | ✓ | Manual token paste |
 | GET | `/api/inbox`, `/api/conversations/{id}` | ✓ | |
+| GET/POST | `/api/inbox/sync` | ✓ | Composio inbox sync (`?run=true` on GET) |
+| POST | `/api/pages/connect-composio` | ✓ | Connect IMADS Agency without Meta token |
 | CRUD | `/api/flows` (+ steps, reorder, duplicate) | ✓ | |
 | POST | `/api/flows/{id}/customers/{customer_id}/send` | ✓ | Starts flow only |
 | GET/POST | `/api/executions/{id}`, `…/cancel`, `…/retry` | ✓ | |

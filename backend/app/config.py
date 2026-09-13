@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     meta_page_access_token: str = ""
     meta_page_id: str = ""
 
+    # Composio (preferred when configured / MESSAGING_PROVIDER=composio)
+    composio_api_key: str = ""
+    composio_connected_account_id: str = "facebook_alvar-therm"
+    composio_user_id: str = "default"
+    messaging_provider: str = "composio"  # composio|meta
+
     public_base_url: str = "http://localhost:8000"
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
@@ -49,6 +55,16 @@ class Settings(BaseSettings):
         if url.startswith("postgresql://") and "+psycopg" not in url.split("://", 1)[0]:
             url = "postgresql+psycopg://" + url[len("postgresql://"):]
         return url
+
+    def uses_composio(self) -> bool:
+        """Prefer Composio when configured; honor explicit MESSAGING_PROVIDER."""
+        provider = (self.messaging_provider or "").strip().lower()
+        if provider == "meta":
+            return False
+        if provider == "composio":
+            return bool(self.composio_api_key)
+        # auto / empty: prefer composio when key + connected account present
+        return bool(self.composio_api_key and self.composio_connected_account_id)
 
 
 @lru_cache

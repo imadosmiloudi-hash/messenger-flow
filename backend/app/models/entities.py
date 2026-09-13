@@ -65,6 +65,7 @@ class Page(Base):
     page_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), default="")
     access_token: Mapped[str] = mapped_column(Text, default="")
+    provider: Mapped[str] = mapped_column(String(32), default="meta")  # meta|composio
     is_connected: Mapped[bool] = mapped_column(Boolean, default=False)
     connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)

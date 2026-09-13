@@ -19,6 +19,9 @@ os.environ["REDIS_URL"] = "redis://localhost:6379/15"
 os.environ["PUBLIC_BASE_URL"] = "https://example.test"
 os.environ["MEDIA_UPLOAD_DIR"] = str(TEST_DIR / "uploads")
 os.environ["CORS_ORIGINS"] = "http://localhost:3000"
+os.environ["MESSAGING_PROVIDER"] = "meta"
+os.environ["COMPOSIO_API_KEY"] = ""
+os.environ["META_PAGE_ID"] = ""
 
 # Clear settings cache
 from app.config import get_settings

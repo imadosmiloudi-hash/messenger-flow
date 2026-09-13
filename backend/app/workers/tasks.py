@@ -19,6 +19,11 @@ from app.models.entities import (
     Page,
     StepType,
 )
+from app.services.composio_client import (
+    ComposioAPIError,
+    ComposioClient,
+    extract_message_id,
+)
 from app.services.events import event_bus
 from app.services.meta_client import MetaAPIError, MetaClient
 
@@ -50,10 +55,17 @@ def enqueue_flow_execution(execution_id: str) -> str | None:
         raise
 
 
+def _use_composio(page: Page) -> bool:
+    settings = get_settings()
+    if settings.uses_composio():
+        return True
+    return (page.provider or "").lower() == "composio" and bool(settings.composio_api_key)
+
+
 def run_flow_execution(execution_id: str) -> None:
     """
-    Sequentially send flow steps via official Meta Graph API.
-    Never invoked from webhook request path.
+    Sequentially send flow steps via Composio (preferred) or Meta Graph API.
+    Never invoked from webhook request path. Manual SEND FLOW only.
     """
     db = SessionLocal()
     try:
@@ -77,7 +89,11 @@ def run_flow_execution(execution_id: str) -> None:
             .one()
         )
         page = db.query(Page).filter(Page.page_id == execution.page_id).first()
-        if not page or not page.access_token:
+        use_composio = bool(page) and _use_composio(page)
+        if not page:
+            _fail(db, execution, "Page missing")
+            return
+        if not use_composio and not page.access_token:
             _fail(db, execution, "Page token missing")
             return
 
@@ -90,7 +106,13 @@ def run_flow_execution(execution_id: str) -> None:
             _fail(db, execution, "Customer missing")
             return
 
-        client = MetaClient(access_token=page.access_token)
+        meta_client = None
+        composio_client = None
+        if use_composio:
+            composio_client = ComposioClient()
+        else:
+            meta_client = MetaClient(access_token=page.access_token)
+
         steps = sorted(flow.steps, key=lambda s: s.position)
         exec_steps = {s.position: s for s in execution.steps}
 
@@ -113,7 +135,6 @@ def run_flow_execution(execution_id: str) -> None:
             try:
                 if step.step_type == StepType.DELAY:
                     delay = max(0, step.delay_seconds or 0)
-                    # Check cancel periodically during long delays
                     remaining = delay
                     while remaining > 0:
                         chunk = min(remaining, 1)
@@ -125,8 +146,16 @@ def run_flow_execution(execution_id: str) -> None:
                     meta_mid = None
                 elif step.step_type == StepType.TEXT:
                     text = step.content or ""
-                    result = client.send_text(page.page_id, customer.psid, text)
-                    meta_mid = result.get("message_id")
+                    if use_composio:
+                        result = composio_client.send_text(
+                            page.page_id, customer.psid, text
+                        )
+                        meta_mid = extract_message_id(result)
+                    else:
+                        result = meta_client.send_text(
+                            page.page_id, customer.psid, text
+                        )
+                        meta_mid = result.get("message_id")
                 elif step.step_type in (StepType.IMAGE, StepType.AUDIO, StepType.VIDEO):
                     url = step.content
                     if step.media_asset_id:
@@ -138,10 +167,16 @@ def run_flow_execution(execution_id: str) -> None:
                     if not url:
                         raise MetaAPIError("Media URL missing for attachment step")
                     att_type = step.step_type.value.lower()
-                    result = client.send_attachment(
-                        page.page_id, customer.psid, att_type, url
-                    )
-                    meta_mid = result.get("message_id")
+                    if use_composio:
+                        result = composio_client.send_media(
+                            page.page_id, customer.psid, att_type, url
+                        )
+                        meta_mid = extract_message_id(result)
+                    else:
+                        result = meta_client.send_attachment(
+                            page.page_id, customer.psid, att_type, url
+                        )
+                        meta_mid = result.get("message_id")
                 else:
                     raise MetaAPIError(f"Unknown step type {step.step_type}")
 
@@ -160,12 +195,11 @@ def run_flow_execution(execution_id: str) -> None:
                     },
                 )
 
-                # Inter-step delay if configured on non-DELAY steps
                 if step.step_type != StepType.DELAY and step.delay_seconds:
                     time.sleep(max(0, step.delay_seconds))
 
-            except MetaAPIError as exc:
-                msg = exc.operator_message
+            except (MetaAPIError, ComposioAPIError) as exc:
+                msg = getattr(exc, "operator_message", None) or str(exc)
                 if estep:
                     estep.status = ExecutionStatus.FAILED
                     estep.error_message = msg
