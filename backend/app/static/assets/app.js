@@ -101,8 +101,12 @@
     const name = c.customer?.display_name || c.customer?.psid || "Customer";
     return `
       <a href="/inbox/${esc(c.id)}" data-link class="list-item">
-        <strong>${esc(name)} ${c.unread_count > 0 ? `<span class="badge warn">${c.unread_count}</span>` : ""}</strong>
-        <div class="meta">${esc(c.last_message_preview || "")} · ${fmtTime(c.last_message_at)}</div>
+        <div class="list-item-top">
+          <strong>${esc(name)}</strong>
+          ${c.unread_count > 0 ? `<span class="badge warn">${c.unread_count}</span>` : ""}
+          <span class="list-item-time">${fmtTime(c.last_message_at)}</span>
+        </div>
+        <div class="meta">${esc(c.last_message_preview || "No messages yet")}</div>
       </a>`;
   }
 
@@ -252,7 +256,7 @@
     }
     return shell(
       `
-      <div class="brand">
+      <div class="brand login-brand">
         <h1>Messenger Flow</h1>
         <p class="muted">Operator console · official Meta Graph API</p>
       </div>
@@ -645,8 +649,8 @@
                 <div class="preview">${esc(s.content || (s.step_type === "DELAY" ? `(wait ${s.delay_seconds}s)` : ""))}</div>
               </div>
               <div class="step-actions">
-                <button type="button" class="btn secondary sm icon step-up" data-id="${esc(s.id)}" ${i === 0 ? "disabled" : ""} title="Move up">↑</button>
-                <button type="button" class="btn secondary sm icon step-down" data-id="${esc(s.id)}" ${i === steps.length - 1 ? "disabled" : ""} title="Move down">↓</button>
+                <button type="button" class="btn secondary sm icon step-up" data-id="${esc(s.id)}" ${i === 0 ? "disabled" : ""} title="Move up" aria-label="Move up">↑</button>
+                <button type="button" class="btn secondary sm icon step-down" data-id="${esc(s.id)}" ${i === steps.length - 1 ? "disabled" : ""} title="Move down" aria-label="Move down">↓</button>
                 <button type="button" class="btn secondary sm step-edit-btn" data-id="${esc(s.id)}">Edit</button>
                 <button type="button" class="btn secondary sm del-step" data-id="${esc(s.id)}">✕</button>
               </div>
