@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     media_upload_dir: str = "./uploads"
     max_upload_mb: int = 25
 
+    # Micro-gap between sequential media sends in one step (ms) to avoid Meta/Composio rate limits
+    flow_media_gap_ms: int = 100
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

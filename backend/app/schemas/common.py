@@ -1,7 +1,8 @@
+import json
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.models.entities import ExecutionStatus, StepType
 
@@ -105,6 +106,7 @@ class FlowStepCreate(BaseModel):
     step_type: StepType
     content: str | None = None
     media_asset_id: str | None = None
+    media_asset_ids: list[str] | None = None
     delay_seconds: int = 0
     position: int | None = None
 
@@ -113,6 +115,7 @@ class FlowStepUpdate(BaseModel):
     step_type: StepType | None = None
     content: str | None = None
     media_asset_id: str | None = None
+    media_asset_ids: list[str] | None = None
     delay_seconds: int | None = None
     position: int | None = None
 
@@ -124,7 +127,38 @@ class FlowStepOut(ORMModel):
     step_type: StepType
     content: str | None
     media_asset_id: str | None
+    media_asset_ids: list[str] | None = None
     delay_seconds: int
+
+    @field_validator("media_asset_ids", mode="before")
+    @classmethod
+    def _coerce_media_asset_ids(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, list):
+            return [str(x) for x in v if x]
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return None
+            try:
+                parsed = json.loads(s)
+            except json.JSONDecodeError:
+                return None
+            if isinstance(parsed, list):
+                return [str(x) for x in parsed if x]
+        return None
+
+    @model_validator(mode="after")
+    def _effective_media_ids(self):
+        # Effective list = media_asset_ids if non-empty else ([media_asset_id] if set else [])
+        if self.media_asset_ids:
+            return self
+        if self.media_asset_id:
+            self.media_asset_ids = [self.media_asset_id]
+        else:
+            self.media_asset_ids = []
+        return self
 
 
 class FlowCreate(BaseModel):

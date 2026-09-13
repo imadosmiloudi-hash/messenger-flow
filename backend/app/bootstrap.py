@@ -29,6 +29,7 @@ DEFAULT_COMPOSIO_PAGE_NAME = "IMADS Agency"
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_page_provider_column()
+    _ensure_flow_step_media_asset_ids_column()
     db = SessionLocal()
     try:
         ensure_admin(db)
@@ -52,6 +53,22 @@ def _ensure_page_provider_column() -> None:
             conn.execute(
                 text("ALTER TABLE pages ADD COLUMN provider VARCHAR(32) DEFAULT 'meta'")
             )
+    except Exception:
+        # Best-effort; fresh DBs already have the column via create_all
+        pass
+
+
+def _ensure_flow_step_media_asset_ids_column() -> None:
+    """Add flow_steps.media_asset_ids if missing (create_all does not alter existing tables)."""
+    try:
+        insp = inspect(engine)
+        if "flow_steps" not in insp.get_table_names():
+            return
+        cols = {c["name"] for c in insp.get_columns("flow_steps")}
+        if "media_asset_ids" in cols:
+            return
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE flow_steps ADD COLUMN media_asset_ids TEXT"))
     except Exception:
         # Best-effort; fresh DBs already have the column via create_all
         pass

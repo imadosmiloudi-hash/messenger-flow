@@ -16,6 +16,7 @@ from app.schemas.common import (
 )
 from app.security.auth import get_current_user
 from app.services.flow_engine import start_flow_execution
+from app.services.step_media import apply_media_fields
 
 router = APIRouter(prefix="/api/flows", tags=["flows"])
 
@@ -48,16 +49,21 @@ def create_flow(
     db.add(flow)
     db.flush()
     for i, s in enumerate(body.steps):
-        db.add(
-            FlowStep(
-                flow_id=flow.id,
-                position=s.position if s.position is not None else i,
-                step_type=s.step_type,
-                content=s.content,
-                media_asset_id=s.media_asset_id,
-                delay_seconds=s.delay_seconds,
-            )
+        step = FlowStep(
+            flow_id=flow.id,
+            position=s.position if s.position is not None else i,
+            step_type=s.step_type,
+            content=s.content,
+            delay_seconds=s.delay_seconds,
         )
+        apply_media_fields(
+            step,
+            media_asset_id=s.media_asset_id,
+            media_asset_ids=s.media_asset_ids,
+            ids_provided=s.media_asset_ids is not None,
+            id_provided=s.media_asset_id is not None,
+        )
+        db.add(step)
     db.commit()
     return _load_flow(db, flow.id)
 
@@ -106,8 +112,14 @@ def add_step(
         position=pos,
         step_type=body.step_type,
         content=body.content,
-        media_asset_id=body.media_asset_id,
         delay_seconds=body.delay_seconds,
+    )
+    apply_media_fields(
+        step,
+        media_asset_id=body.media_asset_id,
+        media_asset_ids=body.media_asset_ids,
+        ids_provided=body.media_asset_ids is not None,
+        id_provided=body.media_asset_id is not None,
     )
     db.add(step)
     db.commit()
@@ -126,10 +138,18 @@ def update_step(
     step = db.query(FlowStep).filter(FlowStep.id == step_id, FlowStep.flow_id == flow_id).first()
     if not step:
         raise HTTPException(status_code=404, detail="Step not found")
-    for field in ("step_type", "content", "media_asset_id", "delay_seconds", "position"):
-        val = getattr(body, field)
-        if val is not None:
-            setattr(step, field, val)
+    data = body.model_dump(exclude_unset=True)
+    for field in ("step_type", "content", "delay_seconds", "position"):
+        if field in data:
+            setattr(step, field, data[field])
+    if "media_asset_ids" in data or "media_asset_id" in data:
+        apply_media_fields(
+            step,
+            media_asset_id=data.get("media_asset_id"),
+            media_asset_ids=data.get("media_asset_ids"),
+            ids_provided="media_asset_ids" in data,
+            id_provided="media_asset_id" in data,
+        )
     db.commit()
     db.refresh(step)
     return step
@@ -184,6 +204,7 @@ def duplicate_flow(
                 step_type=s.step_type,
                 content=s.content,
                 media_asset_id=s.media_asset_id,
+                media_asset_ids=s.media_asset_ids,
                 delay_seconds=s.delay_seconds,
             )
         )

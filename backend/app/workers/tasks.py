@@ -62,6 +62,36 @@ def _use_composio(page: Page) -> bool:
     return (page.provider or "").lower() == "composio" and bool(settings.composio_api_key)
 
 
+def _media_gap_seconds() -> float:
+    """Tiny gap between sequential media sends to avoid Meta/Composio hard rate-limit fails."""
+    try:
+        ms = int(get_settings().flow_media_gap_ms or 100)
+    except Exception:
+        ms = 100
+    return max(0.0, ms / 1000.0)
+
+
+def _resolve_media_urls(db, step) -> list[str]:
+    """Ordered public URLs from media_asset_ids, legacy media_asset_id, then content URL fallback."""
+    from app.models.entities import MediaAsset
+    from app.services.step_media import parse_media_asset_ids
+
+    ids = parse_media_asset_ids(getattr(step, "media_asset_ids", None), step.media_asset_id)
+    urls: list[str] = []
+    seen: set[str] = set()
+    for aid in ids:
+        asset = db.get(MediaAsset, aid)
+        url = asset.public_url if asset and asset.public_url else None
+        if url and url not in seen:
+            urls.append(url)
+            seen.add(url)
+    if not urls:
+        content = (step.content or "").strip()
+        if content.startswith(("http://", "https://")):
+            urls.append(content)
+    return urls
+
+
 def run_flow_execution(execution_id: str) -> None:
     """
     Sequentially send flow steps via Composio (preferred) or Meta Graph API.
@@ -157,26 +187,25 @@ def run_flow_execution(execution_id: str) -> None:
                         )
                         meta_mid = result.get("message_id")
                 elif step.step_type in (StepType.IMAGE, StepType.AUDIO, StepType.VIDEO):
-                    url = step.content
-                    if step.media_asset_id:
-                        from app.models.entities import MediaAsset
-
-                        asset = db.get(MediaAsset, step.media_asset_id)
-                        if asset and asset.public_url:
-                            url = asset.public_url
-                    if not url:
+                    urls = _resolve_media_urls(db, step)
+                    if not urls:
                         raise MetaAPIError("Media URL missing for attachment step")
                     att_type = step.step_type.value.lower()
-                    if use_composio:
-                        result = composio_client.send_media(
-                            page.page_id, customer.psid, att_type, url
-                        )
-                        meta_mid = extract_message_id(result)
-                    else:
-                        result = meta_client.send_attachment(
-                            page.page_id, customer.psid, att_type, url
-                        )
-                        meta_mid = result.get("message_id")
+                    gap_s = _media_gap_seconds()
+                    meta_mid = None
+                    for j, url in enumerate(urls):
+                        if j > 0 and gap_s > 0:
+                            time.sleep(gap_s)
+                        if use_composio:
+                            result = composio_client.send_media(
+                                page.page_id, customer.psid, att_type, url
+                            )
+                            meta_mid = extract_message_id(result)
+                        else:
+                            result = meta_client.send_attachment(
+                                page.page_id, customer.psid, att_type, url
+                            )
+                            meta_mid = result.get("message_id")
                 else:
                     raise MetaAPIError(f"Unknown step type {step.step_type}")
 
@@ -195,8 +224,11 @@ def run_flow_execution(execution_id: str) -> None:
                     },
                 )
 
-                if step.step_type != StepType.DELAY and step.delay_seconds:
-                    time.sleep(max(0, step.delay_seconds))
+                # Honor explicit post-step delay only if > 0. DELAY steps already waited.
+                if step.step_type != StepType.DELAY:
+                    extra = int(step.delay_seconds or 0)
+                    if extra > 0:
+                        time.sleep(extra)
 
             except (MetaAPIError, ComposioAPIError) as exc:
                 msg = getattr(exc, "operator_message", None) or str(exc)

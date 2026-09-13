@@ -165,6 +165,8 @@ class FlowStep(Base):
     media_asset_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("media_assets.id"), nullable=True
     )
+    # JSON array of media asset UUID strings (ordered). Legacy single id kept in media_asset_id.
+    media_asset_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
     delay_seconds: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

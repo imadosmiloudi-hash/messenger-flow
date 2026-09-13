@@ -71,6 +71,124 @@
     return `<span class="badge ${cls}">${esc(st)}</span>`;
   }
 
+  function effectiveMediaIds(s) {
+    if (s && Array.isArray(s.media_asset_ids) && s.media_asset_ids.length) return s.media_asset_ids;
+    if (s && s.media_asset_id) return [s.media_asset_id];
+    return [];
+  }
+
+  function mediaCountLabel(s) {
+    const n = effectiveMediaIds(s).length;
+    if (!n) return "";
+    const map = { IMAGE: ["image", "images"], AUDIO: ["audio", "audios"], VIDEO: ["video", "videos"] };
+    const pair = map[s.step_type] || ["file", "files"];
+    const word = n === 1 ? pair[0] : pair[1];
+    return `<span class="badge ok">📎 ${n} ${word}</span>`;
+  }
+
+  function isMediaType(t) {
+    return t === "IMAGE" || t === "AUDIO" || t === "VIDEO";
+  }
+
+  function acceptFor(t) {
+    if (t === "IMAGE") return "image/*";
+    if (t === "AUDIO") return "audio/*";
+    if (t === "VIDEO") return "video/*";
+    return "";
+  }
+
+  function inboxItemHtml(c) {
+    const name = c.customer?.display_name || c.customer?.psid || "Customer";
+    return `
+      <a href="/inbox/${esc(c.id)}" data-link class="list-item">
+        <strong>${esc(name)} ${c.unread_count > 0 ? `<span class="badge warn">${c.unread_count}</span>` : ""}</strong>
+        <div class="meta">${esc(c.last_message_preview || "")} · ${fmtTime(c.last_message_at)}</div>
+      </a>`;
+  }
+
+  function bindLocalLinks(scope) {
+    (scope || document).querySelectorAll("[data-link]").forEach((a) => {
+      a.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        navigate(a.getAttribute("href"));
+      });
+    });
+  }
+
+  function attachMediaPicker({ fileEl, chipsEl, statusEl, typeEl, initial }) {
+    const MAX = 50;
+    let items = (initial || []).slice(0, MAX);
+    let uploading = false;
+
+    function renderChips() {
+      if (!chipsEl) return;
+      chipsEl.innerHTML = items.map((m, i) => {
+        const isImg = (m.media_type === "image" || (typeEl && typeEl.value === "IMAGE")) && m.public_url;
+        const icon = m.media_type === "audio" ? "♪" : m.media_type === "video" ? "▶" : "📎";
+        return `<div class="media-chip" data-i="${i}">
+          ${isImg ? `<img src="${esc(m.public_url)}" alt="">` : `<span class="media-chip-icon">${icon}</span>`}
+          <span class="media-chip-name">${esc(m.filename || (m.id || "").slice(0, 8))}</span>
+          <button type="button" class="media-chip-x" data-i="${i}" aria-label="Remove">×</button>
+        </div>`;
+      }).join("");
+      chipsEl.querySelectorAll(".media-chip-x").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          items.splice(Number(btn.dataset.i), 1);
+          renderChips();
+          updateStatus();
+        });
+      });
+    }
+
+    function updateStatus() {
+      if (statusEl) statusEl.textContent = items.length ? `${items.length} / ${MAX} attached` : "";
+    }
+
+    async function uploadFiles(fileList) {
+      const files = Array.from(fileList || []);
+      const room = MAX - items.length;
+      const batch = files.slice(0, room);
+      if (!batch.length) {
+        if (statusEl) statusEl.textContent = items.length >= MAX ? `Max ${MAX} files per step` : "";
+        return;
+      }
+      uploading = true;
+      for (let i = 0; i < batch.length; i++) {
+        const file = batch[i];
+        if (statusEl) statusEl.textContent = `Uploading ${i + 1}/${batch.length}: ${file.name}`;
+        try {
+          const fd = new FormData();
+          fd.append("file", file);
+          const asset = await api("/api/media/upload", { method: "POST", body: fd });
+          items.push({
+            id: asset.id,
+            filename: asset.filename,
+            public_url: asset.public_url,
+            media_type: asset.media_type,
+          });
+          renderChips();
+        } catch (e) {
+          if (statusEl) statusEl.textContent = e.message || "Upload failed";
+        }
+      }
+      uploading = false;
+      updateStatus();
+    }
+
+    fileEl?.addEventListener("change", async () => {
+      await uploadFiles(fileEl.files);
+      if (fileEl) fileEl.value = "";
+    });
+
+    renderChips();
+    updateStatus();
+    return {
+      getIds: () => items.map((m) => m.id),
+      isUploading: () => uploading,
+      clear() { items = []; renderChips(); updateStatus(); },
+    };
+  }
+
   /* ---------- Router ---------- */
   const root = document.getElementById("app");
   let state = { title: "Operator", showNav: true, showBack: false, backTo: "/" };
@@ -244,24 +362,51 @@
       <div id="inbox-sync-msg" class="ok-box hidden"></div>
       <div id="inbox-sync-err" class="err-box hidden"></div>
       <div class="card">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
-          <h2 style="margin:0">Inbox</h2>
-          <button type="button" class="btn secondary" id="inbox-sync-btn">Sync</button>
+        <div class="inbox-toolbar">
+          <h2>Inbox</h2>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span class="sync-pill">Auto-sync every 10s</span>
+            <button type="button" class="btn secondary sm" id="inbox-sync-btn">Sync</button>
+          </div>
         </div>
         <p class="muted">Tap a conversation, then SEND FLOW. Webhook never auto-replies.</p>
         ${syncLine ? `<p class="muted" id="inbox-sync-status">${syncLine}</p>` : `<p class="muted" id="inbox-sync-status">Sync pulls conversations via Composio.</p>`}
-        ${rows.length === 0 && !error ? `<p class="muted">No conversations yet.</p>` : ""}
-        ${rows.map((c) => {
-          const name = c.customer?.display_name || c.customer?.psid || "Customer";
-          return `
-            <a href="/inbox/${esc(c.id)}" data-link class="list-item">
-              <strong>${esc(name)} ${c.unread_count > 0 ? `<span class="badge warn">${c.unread_count}</span>` : ""}</strong>
-              <div class="meta">${esc(c.last_message_preview || "")} · ${fmtTime(c.last_message_at)}</div>
-            </a>`;
-        }).join("")}
+        <div id="inbox-list">
+          ${rows.length === 0 && !error ? `<p class="muted">No conversations yet.</p>` : rows.map(inboxItemHtml).join("")}
+        </div>
       </div>
     `;
     return shell(inner, { title: "Inbox" });
+  }
+
+  function paintInboxRows(rows) {
+    const list = document.getElementById("inbox-list");
+    if (!list) return;
+    if (!rows.length) {
+      list.innerHTML = `<p class="muted">No conversations yet.</p>`;
+      return;
+    }
+    list.innerHTML = rows.map(inboxItemHtml).join("");
+    bindLocalLinks(list);
+  }
+
+  async function quietInboxSync(announce) {
+    const msg = document.getElementById("inbox-sync-msg");
+    const err = document.getElementById("inbox-sync-err");
+    const statusEl = document.getElementById("inbox-sync-status");
+    const data = await api("/api/inbox/sync", { method: "POST" });
+    if (announce && msg) {
+      msg.textContent = `Synced ${data.conversations_upserted || 0} conversations`;
+      msg.classList.remove("hidden");
+    }
+    if (statusEl) {
+      statusEl.textContent = data.error
+        ? `Last sync failed: ${data.error}`
+        : `Last sync: ${fmtTime(data.synced_at)} · ${data.conversations_upserted || 0} conversations`;
+    }
+    const rows = await api("/api/inbox");
+    paintInboxRows(rows);
+    return data;
   }
 
   function bindInbox() {
@@ -269,7 +414,6 @@
       const btn = document.getElementById("inbox-sync-btn");
       const msg = document.getElementById("inbox-sync-msg");
       const err = document.getElementById("inbox-sync-err");
-      const statusEl = document.getElementById("inbox-sync-status");
       msg?.classList.add("hidden");
       err?.classList.add("hidden");
       if (btn) {
@@ -277,17 +421,7 @@
         btn.textContent = "Syncing…";
       }
       try {
-        const data = await api("/api/inbox/sync", { method: "POST" });
-        if (msg) {
-          msg.textContent = `Synced ${data.conversations_upserted || 0} conversations`;
-          msg.classList.remove("hidden");
-        }
-        if (statusEl) {
-          statusEl.textContent = data.error
-            ? `Last sync failed: ${data.error}`
-            : `Last sync: ${fmtTime(data.synced_at)} · ${data.conversations_upserted || 0} conversations`;
-        }
-        render();
+        await quietInboxSync(true);
       } catch (ex) {
         if (err) {
           err.textContent = ex.message || "Sync failed";
@@ -300,6 +434,9 @@
         }
       }
     });
+    window.__inboxSyncTimer = setInterval(() => {
+      quietInboxSync(false).catch(() => {});
+    }, 10000);
   }
 
   async function viewConversation(id) {
@@ -326,7 +463,7 @@
           `).join("")}
         </div>
       </div>
-      <div class="card">
+      <div class="card sticky-actions">
         <h2>SEND FLOW</h2>
         <p class="muted">Only this authenticated action starts sending. Webhook never auto-replies.</p>
         ${active ? `<p>Active: ${statusBadge(active.status)} <span class="muted">${esc(active.id.slice(0, 8))}…</span></p>` : ""}
@@ -466,12 +603,20 @@
   async function viewFlow(id) {
     let flow = null;
     let error = "";
+    let mediaById = {};
     try {
       flow = await api(`/api/flows/${id}`);
+      try {
+        const assets = await api("/api/media");
+        (assets || []).forEach((a) => { mediaById[a.id] = a; });
+      } catch (_) { /* thumbnails optional */ }
     } catch (e) {
       error = e.message;
     }
     const steps = (flow?.steps || []).slice().sort((a, b) => a.position - b.position);
+    window.__currentFlowSteps = steps;
+    window.__currentFlowId = id;
+    window.__mediaById = mediaById;
     const inner = `
       ${error ? `<div class="err-box">${esc(error)}</div>` : ""}
       ${flow ? `
@@ -490,19 +635,26 @@
         <div class="card">
           <h2>Steps</h2>
           ${steps.length === 0 ? `<p class="muted">No steps yet.</p>` : ""}
-          ${steps.map((s) => `
-            <div class="step-row">
-              <div style="flex:1">
-                <span class="badge">${esc(s.step_type)}</span>
+          ${steps.map((s, i) => `
+            <div class="step-row" data-step-id="${esc(s.id)}">
+              <div class="step-grip" aria-hidden="true">⋮⋮</div>
+              <div class="step-body">
+                <span class="badge type-${esc(s.step_type)}">${esc(s.step_type)}</span>
                 ${s.delay_seconds ? `<span class="muted"> +${s.delay_seconds}s</span>` : ""}
-                ${s.media_asset_id ? `<span class="badge ok" title="media attached">📎 media attached</span>` : ""}
-                <div style="margin-top:4px;direction:auto">${esc(s.content || (s.step_type === "DELAY" ? `(wait ${s.delay_seconds}s)` : ""))}</div>
+                ${mediaCountLabel(s)}
+                <div class="preview">${esc(s.content || (s.step_type === "DELAY" ? `(wait ${s.delay_seconds}s)` : ""))}</div>
               </div>
-              <button class="btn secondary sm del-step" data-id="${esc(s.id)}">✕</button>
+              <div class="step-actions">
+                <button type="button" class="btn secondary sm icon step-up" data-id="${esc(s.id)}" ${i === 0 ? "disabled" : ""} title="Move up">↑</button>
+                <button type="button" class="btn secondary sm icon step-down" data-id="${esc(s.id)}" ${i === steps.length - 1 ? "disabled" : ""} title="Move down">↓</button>
+                <button type="button" class="btn secondary sm step-edit-btn" data-id="${esc(s.id)}">Edit</button>
+                <button type="button" class="btn secondary sm del-step" data-id="${esc(s.id)}">✕</button>
+              </div>
             </div>
+            <div class="step-edit hidden" id="step-edit-${esc(s.id)}"></div>
           `).join("")}
         </div>
-        <div class="card">
+        <div class="card sticky-actions">
           <h2>Add step</h2>
           <div id="add-step-err" class="err-box hidden"></div>
           <label class="muted" for="step-type" style="display:block;margin-bottom:6px">Step type</label>
@@ -513,16 +665,16 @@
             <option value="VIDEO">VIDEO</option>
             <option value="DELAY">DELAY</option>
           </select>
-          <p id="step-media-hint" class="muted" style="margin:0 0 10px">For IMAGE / AUDIO / VIDEO: choose type, then upload from your phone below.</p>
+          <p id="step-media-hint" class="muted" style="margin:0 0 10px">IMAGE / AUDIO / VIDEO: upload many files in one step (up to 50). SEND FLOW sends them one-by-one.</p>
           <div id="step-media-wrap" class="media-upload-wrap hidden">
-            <p class="muted" style="margin:0 0 8px">Pick a file from gallery or Files</p>
+            <p class="muted" style="margin:0 0 8px">Pick multiple files from gallery or Files</p>
             <label class="media-upload-label" for="step-file">📷 Upload from phone</label>
-            <input type="file" id="step-file" class="media-file-input" accept="image/*,audio/*,video/*" />
+            <input type="file" id="step-file" class="media-file-input" accept="image/*,audio/*,video/*" multiple />
+            <div id="step-media-chips" class="media-chips"></div>
             <div id="step-media-status" class="muted media-upload-status"></div>
-            <img id="step-media-preview" class="media-preview hidden" alt="Preview" />
           </div>
           <textarea class="input" id="step-content" rows="3" placeholder="Message text (Arabic OK)"></textarea>
-          <input class="input" type="number" id="step-delay" min="0" value="1" placeholder="Delay seconds" />
+          <input class="input" type="number" id="step-delay" min="0" value="0" placeholder="Delay seconds (0 = none)" />
           <button class="btn" id="add-step">Add step</button>
         </div>
       ` : ""}
@@ -579,27 +731,172 @@
         }
       });
     });
-    let pendingMedia = null; // {id, filename, public_url, media_type}
-    let uploading = false;
+
+    async function swapStep(stepId, dir) {
+      const steps = (window.__currentFlowSteps || []).slice().sort((a, b) => a.position - b.position);
+      const i = steps.findIndex((s) => s.id === stepId);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= steps.length) return;
+      const ids = steps.map((s) => s.id);
+      const tmp = ids[i];
+      ids[i] = ids[j];
+      ids[j] = tmp;
+      try {
+        await api(`/api/flows/${id}/steps/reorder`, {
+          method: "POST",
+          body: JSON.stringify({ step_ids: ids }),
+        });
+        render();
+      } catch (e) {
+        alert(e.message);
+      }
+    }
+    document.querySelectorAll(".step-up").forEach((btn) => {
+      btn.addEventListener("click", () => swapStep(btn.dataset.id, -1));
+    });
+    document.querySelectorAll(".step-down").forEach((btn) => {
+      btn.addEventListener("click", () => swapStep(btn.dataset.id, 1));
+    });
+
+    function toggleEditPanel(stepId) {
+      const panel = document.getElementById(`step-edit-${stepId}`);
+      if (!panel) return;
+      if (!panel.classList.contains("hidden") && panel.innerHTML) {
+        panel.classList.add("hidden");
+        panel.innerHTML = "";
+        return;
+      }
+      document.querySelectorAll(".step-edit").forEach((el) => {
+        el.classList.add("hidden");
+        el.innerHTML = "";
+      });
+      const step = (window.__currentFlowSteps || []).find((s) => s.id === stepId);
+      if (!step) return;
+      const ids = effectiveMediaIds(step);
+      const mediaById = window.__mediaById || {};
+      const initial = ids.map((mid) => mediaById[mid] || {
+        id: mid,
+        filename: String(mid).slice(0, 8),
+        public_url: null,
+        media_type: String(step.step_type || "").toLowerCase(),
+      });
+      const types = ["TEXT", "IMAGE", "AUDIO", "VIDEO", "DELAY"];
+      panel.innerHTML = `
+        <div class="step-edit-err err-box hidden"></div>
+        <select class="input edit-type">
+          ${types.map((t) => `<option value="${t}" ${step.step_type === t ? "selected" : ""}>${t}</option>`).join("")}
+        </select>
+        <div class="media-upload-wrap edit-media-wrap hidden">
+          <p class="muted" style="margin:0 0 8px">Add or remove files (max 50)</p>
+          <label class="media-upload-label">📷 Upload more</label>
+          <input type="file" class="media-file-input edit-file" accept="image/*,audio/*,video/*" multiple />
+          <div class="media-chips edit-chips"></div>
+          <div class="muted media-upload-status edit-media-status"></div>
+        </div>
+        <textarea class="input edit-content" rows="3">${esc(step.content || "")}</textarea>
+        <input class="input edit-delay" type="number" min="0" value="${esc(String(step.delay_seconds || 0))}" placeholder="Delay seconds (0 = none)" />
+        <div class="flex-actions">
+          <button type="button" class="btn sm save-edit">Save</button>
+          <button type="button" class="btn secondary sm cancel-edit">Cancel</button>
+        </div>
+      `;
+      const label = panel.querySelector(".media-upload-label");
+      const fileEl = panel.querySelector(".edit-file");
+      if (label && fileEl) {
+        const fid = `edit-file-${stepId}`;
+        fileEl.id = fid;
+        label.setAttribute("for", fid);
+      }
+      const picker = attachMediaPicker({
+        fileEl,
+        chipsEl: panel.querySelector(".edit-chips"),
+        statusEl: panel.querySelector(".edit-media-status"),
+        typeEl: panel.querySelector(".edit-type"),
+        initial,
+      });
+      function syncEditMedia() {
+        const t = panel.querySelector(".edit-type").value;
+        const wrap = panel.querySelector(".edit-media-wrap");
+        wrap.classList.toggle("hidden", !isMediaType(t));
+        if (fileEl && isMediaType(t)) fileEl.accept = acceptFor(t);
+        const content = panel.querySelector(".edit-content");
+        if (t === "DELAY") content.placeholder = "Leave empty for DELAY";
+        else if (isMediaType(t)) content.placeholder = "Optional caption";
+        else content.placeholder = "Message text (Arabic OK)";
+      }
+      panel.querySelector(".edit-type").addEventListener("change", syncEditMedia);
+      syncEditMedia();
+      panel.querySelector(".cancel-edit").addEventListener("click", () => {
+        panel.classList.add("hidden");
+        panel.innerHTML = "";
+      });
+      panel.querySelector(".save-edit").addEventListener("click", async () => {
+        const errEl = panel.querySelector(".step-edit-err");
+        errEl.classList.add("hidden");
+        if (picker.isUploading()) return;
+        const step_type = panel.querySelector(".edit-type").value;
+        const content = panel.querySelector(".edit-content").value;
+        const delay_seconds = Number(panel.querySelector(".edit-delay").value) || 0;
+        const mediaIds = picker.getIds();
+        const body = { step_type, delay_seconds };
+        if (step_type === "DELAY") {
+          body.content = null;
+          body.media_asset_ids = [];
+          body.media_asset_id = null;
+        } else if (isMediaType(step_type)) {
+          if (!mediaIds.length) {
+            const looksUrl = /^https?:\/\//i.test((content || "").trim());
+            if (looksUrl) {
+              body.content = content.trim();
+              body.media_asset_ids = [];
+              body.media_asset_id = null;
+            } else {
+              errEl.textContent = "Upload media first (or paste an https URL).";
+              errEl.classList.remove("hidden");
+              return;
+            }
+          } else {
+            body.media_asset_ids = mediaIds;
+            body.media_asset_id = mediaIds[0];
+            body.content = (content || "").trim() || null;
+          }
+        } else {
+          body.content = content || null;
+          body.media_asset_ids = [];
+          body.media_asset_id = null;
+        }
+        try {
+          await api(`/api/flows/${id}/steps/${stepId}`, {
+            method: "PATCH",
+            body: JSON.stringify(body),
+          });
+          render();
+        } catch (e) {
+          errEl.textContent = e.message;
+          errEl.classList.remove("hidden");
+        }
+      });
+      panel.classList.remove("hidden");
+    }
+    document.querySelectorAll(".step-edit-btn").forEach((btn) => {
+      btn.addEventListener("click", () => toggleEditPanel(btn.dataset.id));
+    });
 
     const typeEl = document.getElementById("step-type");
     const wrapEl = document.getElementById("step-media-wrap");
     const fileEl = document.getElementById("step-file");
     const statusEl = document.getElementById("step-media-status");
-    const previewEl = document.getElementById("step-media-preview");
+    const chipsEl = document.getElementById("step-media-chips");
     const contentEl = document.getElementById("step-content");
     const addBtn = document.getElementById("add-step");
 
-    function isMediaType(t) {
-      return t === "IMAGE" || t === "AUDIO" || t === "VIDEO";
-    }
-
-    function acceptFor(t) {
-      if (t === "IMAGE") return "image/*";
-      if (t === "AUDIO") return "audio/*";
-      if (t === "VIDEO") return "video/*";
-      return "";
-    }
+    const addPicker = attachMediaPicker({
+      fileEl,
+      chipsEl,
+      statusEl,
+      typeEl,
+      initial: [],
+    });
 
     function updatePlaceholder() {
       if (!contentEl) return;
@@ -609,106 +906,46 @@
       else contentEl.placeholder = "Message text (Arabic OK)";
     }
 
-    function clearPendingMedia() {
-      pendingMedia = null;
-      if (statusEl) statusEl.textContent = "";
-      if (previewEl) {
-        previewEl.src = "";
-        previewEl.classList.add("hidden");
-      }
-      if (fileEl) fileEl.value = "";
-    }
-
     function syncMediaUi() {
       const t = typeEl?.value;
       const show = isMediaType(t);
       if (wrapEl) wrapEl.classList.toggle("hidden", !show);
       if (fileEl && show) fileEl.accept = acceptFor(t);
       updatePlaceholder();
-      if (!show) clearPendingMedia();
+      if (!show) addPicker.clear();
     }
-
-    function onTypeChanged() {
-      const t = typeEl.value;
-      if (pendingMedia && pendingMedia.media_type) {
-        const map = { IMAGE: "image", AUDIO: "audio", VIDEO: "video" };
-        if (map[t] !== pendingMedia.media_type) clearPendingMedia();
-      } else if (!isMediaType(t)) {
-        clearPendingMedia();
-      }
-      syncMediaUi();
-    }
-    typeEl?.addEventListener("change", onTypeChanged);
-    typeEl?.addEventListener("input", onTypeChanged);
+    typeEl?.addEventListener("change", syncMediaUi);
+    typeEl?.addEventListener("input", syncMediaUi);
     syncMediaUi();
-
-    fileEl?.addEventListener("change", async () => {
-      const errEl = document.getElementById("add-step-err");
-      errEl?.classList.add("hidden");
-      const file = fileEl.files && fileEl.files[0];
-      if (!file) return;
-      const t = typeEl.value;
-      pendingMedia = null;
-      if (previewEl) {
-        previewEl.src = "";
-        previewEl.classList.add("hidden");
-      }
-      if (statusEl) statusEl.textContent = `Selected: ${file.name} · uploading…`;
-      uploading = true;
-      if (addBtn) addBtn.disabled = true;
-      try {
-        const fd = new FormData();
-        fd.append("file", file);
-        const asset = await api("/api/media/upload", { method: "POST", body: fd });
-        pendingMedia = {
-          id: asset.id,
-          filename: asset.filename,
-          public_url: asset.public_url,
-          media_type: asset.media_type,
-        };
-        if (statusEl) statusEl.textContent = `Uploaded: ${asset.filename}`;
-        if (t === "IMAGE" && asset.public_url && previewEl) {
-          previewEl.src = asset.public_url;
-          previewEl.classList.remove("hidden");
-        }
-      } catch (e) {
-        pendingMedia = null;
-        if (statusEl) statusEl.textContent = "";
-        if (errEl) {
-          errEl.textContent = e.message || "Upload failed";
-          errEl.classList.remove("hidden");
-        }
-      } finally {
-        uploading = false;
-        if (addBtn) addBtn.disabled = false;
-      }
-    });
 
     addBtn?.addEventListener("click", async () => {
       const errEl = document.getElementById("add-step-err");
       errEl.classList.add("hidden");
-      if (uploading) return;
+      if (addPicker.isUploading()) return;
       const step_type = typeEl.value;
       const content = contentEl.value;
       const delay_seconds = Number(document.getElementById("step-delay").value) || 0;
+      const mediaIds = addPicker.getIds();
       const body = { step_type, delay_seconds };
 
       if (step_type === "DELAY") {
         body.content = null;
       } else if (isMediaType(step_type)) {
-        if (!pendingMedia) {
+        if (!mediaIds.length) {
           const looksUrl = /^https?:\/\//i.test((content || "").trim());
           if (looksUrl) {
             body.content = content.trim();
             body.media_asset_id = null;
+            body.media_asset_ids = [];
           } else {
             errEl.textContent = "Upload media from your phone first (or paste an https URL as fallback).";
             errEl.classList.remove("hidden");
             return;
           }
         } else {
-          body.media_asset_id = pendingMedia.id;
-          body.content = (content || "").trim() || pendingMedia.filename || null;
+          body.media_asset_ids = mediaIds;
+          body.media_asset_id = mediaIds[0];
+          body.content = (content || "").trim() || null;
         }
       } else {
         body.content = content || null;
@@ -842,6 +1079,10 @@
 
   /* ---------- Render ---------- */
   async function render() {
+    if (window.__inboxSyncTimer) {
+      clearInterval(window.__inboxSyncTimer);
+      window.__inboxSyncTimer = null;
+    }
     const route = parseRoute();
     if (route.name !== "login" && !getToken()) {
       navigate("/login", true);
@@ -913,11 +1154,11 @@
     navigator.serviceWorker.getRegistrations().then((regs) => {
       regs.forEach((r) => r.update());
     }).catch(() => {});
-    navigator.serviceWorker.register("/sw.js?v=20260913b").catch(() => {});
+    navigator.serviceWorker.register("/sw.js?v=20260913c").catch(() => {});
     // Drop stale caches from older builds that hid media upload
     if (window.caches) {
       caches.keys().then((keys) =>
-        Promise.all(keys.filter((k) => k !== "messenger-flow-static-v3").map((k) => caches.delete(k)))
+        Promise.all(keys.filter((k) => k !== "messenger-flow-static-v4").map((k) => caches.delete(k)))
       ).catch(() => {});
     }
   }
