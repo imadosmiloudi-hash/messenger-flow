@@ -1168,11 +1168,11 @@
     navigator.serviceWorker.getRegistrations().then((regs) => {
       regs.forEach((r) => r.update());
     }).catch(() => {});
-    navigator.serviceWorker.register("/sw.js?v=20260913d").catch(() => {});
+    navigator.serviceWorker.register("/sw.js?v=20260913e").catch(() => {});
     // Drop stale caches from older builds that hid media upload
     if (window.caches) {
       caches.keys().then((keys) =>
-        Promise.all(keys.filter((k) => k !== "messenger-flow-static-v5").map((k) => caches.delete(k)))
+        Promise.all(keys.filter((k) => k !== "messenger-flow-static-v6").map((k) => caches.delete(k)))
       ).catch(() => {});
     }
   }
