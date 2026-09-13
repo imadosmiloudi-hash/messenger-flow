@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     def meta_graph_base(self) -> str:
         return f"https://graph.facebook.com/{self.meta_graph_api_version}"
 
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        url = self.database_url
+        if url.startswith("postgres://"):
+            url = "postgresql://" + url[len("postgres://"):]
+        if url.startswith("postgresql://") and "+psycopg" not in url.split("://", 1)[0]:
+            url = "postgresql+psycopg://" + url[len("postgresql://"):]
+        return url
+
 
 @lru_cache
 def get_settings() -> Settings:
