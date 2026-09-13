@@ -1,8 +1,10 @@
-const CACHE = 'messenger-flow-static-v1';
-const ASSETS = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png', '/assets/app.css', '/assets/app.js'];
+const CACHE = 'messenger-flow-static-v3';
+const PRECACHE = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  event.waitUntil(
+    caches.open(CACHE).then((c) => c.addAll(PRECACHE)).then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (event) => {
@@ -15,9 +17,32 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-  if (url.pathname.startsWith('/api') || url.pathname.startsWith('/webhook') || event.request.method !== 'GET') {
+  if (event.request.method !== 'GET') return;
+  if (url.pathname.startsWith('/api') || url.pathname.startsWith('/webhook') || url.pathname.startsWith('/media/')) {
     return;
   }
+
+  // Always network-first for JS/CSS so phone gets new flow upload UI
+  const isAppAsset =
+    url.pathname === '/assets/app.js' ||
+    url.pathname === '/assets/app.css' ||
+    url.pathname === '/sw.js' ||
+    url.pathname === '/' ||
+    url.pathname === '/index.html';
+
+  if (isAppAsset) {
+    event.respondWith(
+      fetch(event.request)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(event.request, copy)).catch(() => {});
+          return res;
+        })
+        .catch(() => caches.match(event.request).then((cached) => cached || caches.match('/')))
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(event.request).then((cached) => cached || fetch(event.request).catch(() => caches.match('/')))
   );

@@ -505,6 +505,7 @@
         <div class="card">
           <h2>Add step</h2>
           <div id="add-step-err" class="err-box hidden"></div>
+          <label class="muted" for="step-type" style="display:block;margin-bottom:6px">Step type</label>
           <select class="input" id="step-type">
             <option value="TEXT">TEXT</option>
             <option value="IMAGE">IMAGE</option>
@@ -512,9 +513,11 @@
             <option value="VIDEO">VIDEO</option>
             <option value="DELAY">DELAY</option>
           </select>
+          <p id="step-media-hint" class="muted" style="margin:0 0 10px">For IMAGE / AUDIO / VIDEO: choose type, then upload from your phone below.</p>
           <div id="step-media-wrap" class="media-upload-wrap hidden">
-            <label class="media-upload-label" for="step-file">Upload from phone</label>
-            <input type="file" id="step-file" class="media-file-input" accept="image/*" />
+            <p class="muted" style="margin:0 0 8px">Pick a file from gallery or Files</p>
+            <label class="media-upload-label" for="step-file">📷 Upload from phone</label>
+            <input type="file" id="step-file" class="media-file-input" accept="image/*,audio/*,video/*" />
             <div id="step-media-status" class="muted media-upload-status"></div>
             <img id="step-media-preview" class="media-preview hidden" alt="Preview" />
           </div>
@@ -625,7 +628,7 @@
       if (!show) clearPendingMedia();
     }
 
-    typeEl?.addEventListener("change", () => {
+    function onTypeChanged() {
       const t = typeEl.value;
       if (pendingMedia && pendingMedia.media_type) {
         const map = { IMAGE: "image", AUDIO: "audio", VIDEO: "video" };
@@ -634,7 +637,9 @@
         clearPendingMedia();
       }
       syncMediaUi();
-    });
+    }
+    typeEl?.addEventListener("change", onTypeChanged);
+    typeEl?.addEventListener("input", onTypeChanged);
     syncMediaUi();
 
     fileEl?.addEventListener("change", async () => {
@@ -905,7 +910,16 @@
 
   // Service worker
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/sw.js").catch(() => {});
+    navigator.serviceWorker.getRegistrations().then((regs) => {
+      regs.forEach((r) => r.update());
+    }).catch(() => {});
+    navigator.serviceWorker.register("/sw.js?v=20260913b").catch(() => {});
+    // Drop stale caches from older builds that hid media upload
+    if (window.caches) {
+      caches.keys().then((keys) =>
+        Promise.all(keys.filter((k) => k !== "messenger-flow-static-v3").map((k) => caches.delete(k)))
+      ).catch(() => {});
+    }
   }
 
   render();
