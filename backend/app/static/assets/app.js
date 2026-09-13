@@ -495,6 +495,7 @@
               <div style="flex:1">
                 <span class="badge">${esc(s.step_type)}</span>
                 ${s.delay_seconds ? `<span class="muted"> +${s.delay_seconds}s</span>` : ""}
+                ${s.media_asset_id ? `<span class="badge ok" title="media attached">📎 media attached</span>` : ""}
                 <div style="margin-top:4px;direction:auto">${esc(s.content || (s.step_type === "DELAY" ? `(wait ${s.delay_seconds}s)` : ""))}</div>
               </div>
               <button class="btn secondary sm del-step" data-id="${esc(s.id)}">✕</button>
@@ -511,7 +512,13 @@
             <option value="VIDEO">VIDEO</option>
             <option value="DELAY">DELAY</option>
           </select>
-          <textarea class="input" id="step-content" rows="3" placeholder="Message text (Arabic OK) / media URL or leave empty for DELAY"></textarea>
+          <div id="step-media-wrap" class="media-upload-wrap hidden">
+            <label class="media-upload-label" for="step-file">Upload from phone</label>
+            <input type="file" id="step-file" class="media-file-input" accept="image/*" />
+            <div id="step-media-status" class="muted media-upload-status"></div>
+            <img id="step-media-preview" class="media-preview hidden" alt="Preview" />
+          </div>
+          <textarea class="input" id="step-content" rows="3" placeholder="Message text (Arabic OK)"></textarea>
           <input class="input" type="number" id="step-delay" min="0" value="1" placeholder="Delay seconds" />
           <button class="btn" id="add-step">Add step</button>
         </div>
@@ -569,25 +576,150 @@
         }
       });
     });
-    document.getElementById("add-step")?.addEventListener("click", async () => {
+    let pendingMedia = null; // {id, filename, public_url, media_type}
+    let uploading = false;
+
+    const typeEl = document.getElementById("step-type");
+    const wrapEl = document.getElementById("step-media-wrap");
+    const fileEl = document.getElementById("step-file");
+    const statusEl = document.getElementById("step-media-status");
+    const previewEl = document.getElementById("step-media-preview");
+    const contentEl = document.getElementById("step-content");
+    const addBtn = document.getElementById("add-step");
+
+    function isMediaType(t) {
+      return t === "IMAGE" || t === "AUDIO" || t === "VIDEO";
+    }
+
+    function acceptFor(t) {
+      if (t === "IMAGE") return "image/*";
+      if (t === "AUDIO") return "audio/*";
+      if (t === "VIDEO") return "video/*";
+      return "";
+    }
+
+    function updatePlaceholder() {
+      if (!contentEl) return;
+      const t = typeEl?.value;
+      if (t === "DELAY") contentEl.placeholder = "Leave empty for DELAY";
+      else if (isMediaType(t)) contentEl.placeholder = "Optional caption";
+      else contentEl.placeholder = "Message text (Arabic OK)";
+    }
+
+    function clearPendingMedia() {
+      pendingMedia = null;
+      if (statusEl) statusEl.textContent = "";
+      if (previewEl) {
+        previewEl.src = "";
+        previewEl.classList.add("hidden");
+      }
+      if (fileEl) fileEl.value = "";
+    }
+
+    function syncMediaUi() {
+      const t = typeEl?.value;
+      const show = isMediaType(t);
+      if (wrapEl) wrapEl.classList.toggle("hidden", !show);
+      if (fileEl && show) fileEl.accept = acceptFor(t);
+      updatePlaceholder();
+      if (!show) clearPendingMedia();
+    }
+
+    typeEl?.addEventListener("change", () => {
+      const t = typeEl.value;
+      if (pendingMedia && pendingMedia.media_type) {
+        const map = { IMAGE: "image", AUDIO: "audio", VIDEO: "video" };
+        if (map[t] !== pendingMedia.media_type) clearPendingMedia();
+      } else if (!isMediaType(t)) {
+        clearPendingMedia();
+      }
+      syncMediaUi();
+    });
+    syncMediaUi();
+
+    fileEl?.addEventListener("change", async () => {
+      const errEl = document.getElementById("add-step-err");
+      errEl?.classList.add("hidden");
+      const file = fileEl.files && fileEl.files[0];
+      if (!file) return;
+      const t = typeEl.value;
+      pendingMedia = null;
+      if (previewEl) {
+        previewEl.src = "";
+        previewEl.classList.add("hidden");
+      }
+      if (statusEl) statusEl.textContent = `Selected: ${file.name} · uploading…`;
+      uploading = true;
+      if (addBtn) addBtn.disabled = true;
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        const asset = await api("/api/media/upload", { method: "POST", body: fd });
+        pendingMedia = {
+          id: asset.id,
+          filename: asset.filename,
+          public_url: asset.public_url,
+          media_type: asset.media_type,
+        };
+        if (statusEl) statusEl.textContent = `Uploaded: ${asset.filename}`;
+        if (t === "IMAGE" && asset.public_url && previewEl) {
+          previewEl.src = asset.public_url;
+          previewEl.classList.remove("hidden");
+        }
+      } catch (e) {
+        pendingMedia = null;
+        if (statusEl) statusEl.textContent = "";
+        if (errEl) {
+          errEl.textContent = e.message || "Upload failed";
+          errEl.classList.remove("hidden");
+        }
+      } finally {
+        uploading = false;
+        if (addBtn) addBtn.disabled = false;
+      }
+    });
+
+    addBtn?.addEventListener("click", async () => {
       const errEl = document.getElementById("add-step-err");
       errEl.classList.add("hidden");
-      const step_type = document.getElementById("step-type").value;
-      const content = document.getElementById("step-content").value;
+      if (uploading) return;
+      const step_type = typeEl.value;
+      const content = contentEl.value;
       const delay_seconds = Number(document.getElementById("step-delay").value) || 0;
+      const body = { step_type, delay_seconds };
+
+      if (step_type === "DELAY") {
+        body.content = null;
+      } else if (isMediaType(step_type)) {
+        if (!pendingMedia) {
+          const looksUrl = /^https?:\/\//i.test((content || "").trim());
+          if (looksUrl) {
+            body.content = content.trim();
+            body.media_asset_id = null;
+          } else {
+            errEl.textContent = "Upload media from your phone first (or paste an https URL as fallback).";
+            errEl.classList.remove("hidden");
+            return;
+          }
+        } else {
+          body.media_asset_id = pendingMedia.id;
+          body.content = (content || "").trim() || pendingMedia.filename || null;
+        }
+      } else {
+        body.content = content || null;
+      }
+
       try {
+        addBtn.disabled = true;
         await api(`/api/flows/${id}/steps`, {
           method: "POST",
-          body: JSON.stringify({
-            step_type,
-            content: step_type === "DELAY" ? null : content || null,
-            delay_seconds,
-          }),
+          body: JSON.stringify(body),
         });
         render();
       } catch (e) {
         errEl.textContent = e.message;
         errEl.classList.remove("hidden");
+        addBtn.disabled = false;
       }
     });
   }

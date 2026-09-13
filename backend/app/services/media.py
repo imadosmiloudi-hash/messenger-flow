@@ -11,8 +11,25 @@ from app.config import get_settings
 from app.models.entities import MediaAsset
 
 ALLOWED_IMAGE = {"image/jpeg", "image/png", "image/gif", "image/webp"}
-ALLOWED_AUDIO = {"audio/mpeg", "audio/mp4", "audio/ogg", "audio/wav", "audio/aac"}
+# audio/x-m4a and audio/m4a are common phone MIME aliases for M4A (treat as audio/mp4)
+ALLOWED_AUDIO = {
+    "audio/mpeg",
+    "audio/mp4",
+    "audio/ogg",
+    "audio/wav",
+    "audio/aac",
+    "audio/x-m4a",
+    "audio/m4a",
+}
 ALLOWED_VIDEO = {"video/mp4", "video/quicktime", "video/webm"}
+# Meta Messenger does not reliably accept HEIC/HEIF — reject with a clear message
+UNSUPPORTED_HEIC = {"image/heic", "image/heif"}
+
+# Normalize phone aliases to Meta-friendly MIME types when storing
+CONTENT_TYPE_NORMALIZE = {
+    "audio/x-m4a": "audio/mp4",
+    "audio/m4a": "audio/mp4",
+}
 
 TYPE_MAP = {
     **{m: "image" for m in ALLOWED_IMAGE},
@@ -24,11 +41,17 @@ TYPE_MAP = {
 def validate_and_save_upload(db: Session, file: UploadFile) -> MediaAsset:
     settings = get_settings()
     content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if content_type in UNSUPPORTED_HEIC:
+        raise HTTPException(
+            status_code=400,
+            detail="HEIC/HEIF images are not supported by Messenger. Convert to JPEG or PNG on your phone, then upload.",
+        )
     if content_type not in TYPE_MAP:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported media type: {content_type}. Allowed: image, audio, video.",
+            detail=f"Unsupported media type: {content_type}. Allowed: jpeg/png/webp/gif, mp3/m4a/aac/ogg/wav, mp4/mov/webm.",
         )
+    content_type = CONTENT_TYPE_NORMALIZE.get(content_type, content_type)
 
     max_bytes = settings.max_upload_mb * 1024 * 1024
     data = file.file.read()

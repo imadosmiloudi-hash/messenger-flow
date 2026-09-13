@@ -141,6 +141,25 @@ def test_media_validation(client, auth_headers):
     assert r.status_code == 201
     assert r.json()["media_type"] == "image"
 
+    # Phone M4A alias accepted and normalized to audio/mp4
+    r = client.post(
+        "/api/media/upload",
+        headers=auth_headers,
+        files={"file": ("voice.m4a", io.BytesIO(b"fake-m4a-bytes"), "audio/x-m4a")},
+    )
+    assert r.status_code == 201
+    assert r.json()["media_type"] == "audio"
+    assert r.json()["content_type"] == "audio/mp4"
+
+    # HEIC rejected with clear message
+    r = client.post(
+        "/api/media/upload",
+        headers=auth_headers,
+        files={"file": ("photo.heic", io.BytesIO(b"heic"), "image/heic")},
+    )
+    assert r.status_code == 400
+    assert "HEIC" in r.json()["detail"]
+
 
 def test_pages_connect(client, auth_headers):
     with patch.object(MetaClient, "get_page_info", return_value={"id": "99", "name": "My Page"}):
