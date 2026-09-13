@@ -118,3 +118,12 @@ class MetaClient:
 
     def get_page_info(self, page_id: str) -> dict[str, Any]:
         return self._request("GET", f"/{page_id}", params={"fields": "id,name"})
+
+    def subscribe_app(self, page_id: str, fields: list[str] | None = None) -> dict[str, Any]:
+        """Subscribe this app to Page webhooks (e.g. messages). Requires Page access token."""
+        subscribed = ",".join(fields or ["messages"])
+        return self._request(
+            "POST",
+            f"/{page_id}/subscribed_apps",
+            params={"subscribed_fields": subscribed},
+        )
