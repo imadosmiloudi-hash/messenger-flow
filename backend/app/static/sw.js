@@ -1,4 +1,4 @@
-const CACHE = 'messenger-flow-static-v4';
+const CACHE = 'messenger-flow-static-v5';
 const PRECACHE = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (event) => {

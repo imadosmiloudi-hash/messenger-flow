@@ -365,7 +365,7 @@
         <div class="inbox-toolbar">
           <h2>Inbox</h2>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span class="sync-pill">Auto-sync every 10s</span>
+            <span class="sync-pill">Auto-sync every 5s</span>
             <button type="button" class="btn secondary sm" id="inbox-sync-btn">Sync</button>
           </div>
         </div>
@@ -436,7 +436,7 @@
     });
     window.__inboxSyncTimer = setInterval(() => {
       quietInboxSync(false).catch(() => {});
-    }, 10000);
+    }, 5000);
   }
 
   async function viewConversation(id) {
@@ -463,7 +463,7 @@
           `).join("")}
         </div>
       </div>
-      <div class="card sticky-actions">
+      <div class="card">
         <h2>SEND FLOW</h2>
         <p class="muted">Only this authenticated action starts sending. Webhook never auto-replies.</p>
         ${active ? `<p>Active: ${statusBadge(active.status)} <span class="muted">${esc(active.id.slice(0, 8))}…</span></p>` : ""}
@@ -636,7 +636,7 @@
           <h2>Steps</h2>
           ${steps.length === 0 ? `<p class="muted">No steps yet.</p>` : ""}
           ${steps.map((s, i) => `
-            <div class="step-row" data-step-id="${esc(s.id)}">
+            <div class="step-row" id="step-row-${esc(s.id)}" data-step-id="${esc(s.id)}">
               <div class="step-grip" aria-hidden="true">⋮⋮</div>
               <div class="step-body">
                 <span class="badge type-${esc(s.step_type)}">${esc(s.step_type)}</span>
@@ -654,7 +654,7 @@
             <div class="step-edit hidden" id="step-edit-${esc(s.id)}"></div>
           `).join("")}
         </div>
-        <div class="card sticky-actions">
+        <div class="card" id="add-step-card">
           <h2>Add step</h2>
           <div id="add-step-err" class="err-box hidden"></div>
           <label class="muted" for="step-type" style="display:block;margin-bottom:6px">Step type</label>
@@ -746,6 +746,8 @@
           method: "POST",
           body: JSON.stringify({ step_ids: ids }),
         });
+        // Stay on the moved step — do not jump to Add step
+        window.__focusStepId = stepId;
         render();
       } catch (e) {
         alert(e.message);
@@ -757,6 +759,18 @@
     document.querySelectorAll(".step-down").forEach((btn) => {
       btn.addEventListener("click", () => swapStep(btn.dataset.id, 1));
     });
+
+    // After ↑↓ reorder: keep the moved step in view and highlight it
+    const focusId = window.__focusStepId;
+    if (focusId) {
+      window.__focusStepId = null;
+      const row = document.getElementById(`step-row-${focusId}`);
+      if (row) {
+        row.classList.add("step-flash");
+        row.scrollIntoView({ behavior: "smooth", block: "center" });
+        setTimeout(() => row.classList.remove("step-flash"), 1200);
+      }
+    }
 
     function toggleEditPanel(stepId) {
       const panel = document.getElementById(`step-edit-${stepId}`);
@@ -1154,11 +1168,11 @@
     navigator.serviceWorker.getRegistrations().then((regs) => {
       regs.forEach((r) => r.update());
     }).catch(() => {});
-    navigator.serviceWorker.register("/sw.js?v=20260913c").catch(() => {});
+    navigator.serviceWorker.register("/sw.js?v=20260913d").catch(() => {});
     // Drop stale caches from older builds that hid media upload
     if (window.caches) {
       caches.keys().then((keys) =>
-        Promise.all(keys.filter((k) => k !== "messenger-flow-static-v4").map((k) => caches.delete(k)))
+        Promise.all(keys.filter((k) => k !== "messenger-flow-static-v5").map((k) => caches.delete(k)))
       ).catch(() => {});
     }
   }

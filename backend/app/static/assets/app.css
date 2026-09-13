@@ -367,11 +367,14 @@ label.check {
 }
 
 .sticky-actions {
-  position: sticky;
-  bottom: calc(58px + var(--safe-bottom));
-  z-index: 15;
-  background: var(--card);
-  box-shadow: 0 -8px 24px rgba(0,0,0,0.25);
+  /* disabled: sticky Add step was covering the list during ↑↓ */
+  position: static;
+  box-shadow: none;
+}
+.step-row.step-flash {
+  outline: 2px solid var(--primary);
+  background: rgba(37, 99, 235, 0.12);
+  transition: background 0.3s ease;
 }
 
 .inbox-toolbar {
