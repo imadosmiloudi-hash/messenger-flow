@@ -15,4 +15,6 @@ RUN mkdir -p /app/data /app/uploads
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+COPY start_api.sh start_worker.sh ./
+RUN chmod +x start_api.sh start_worker.sh
+CMD ["sh", "start_api.sh"]
