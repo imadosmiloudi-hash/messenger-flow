@@ -365,7 +365,7 @@
         <div class="inbox-toolbar">
           <h2>Inbox</h2>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span class="sync-pill">Auto-sync every 5s</span>
+            <span class="sync-pill">Auto-sync every 1s</span>
             <button type="button" class="btn secondary sm" id="inbox-sync-btn">Sync</button>
           </div>
         </div>
@@ -436,7 +436,7 @@
     });
     window.__inboxSyncTimer = setInterval(() => {
       quietInboxSync(false).catch(() => {});
-    }, 5000);
+    }, 1000);
   }
 
   async function viewConversation(id) {
@@ -1168,11 +1168,11 @@
     navigator.serviceWorker.getRegistrations().then((regs) => {
       regs.forEach((r) => r.update());
     }).catch(() => {});
-    navigator.serviceWorker.register("/sw.js?v=20260913f").catch(() => {});
+    navigator.serviceWorker.register("/sw.js?v=20260913g").catch(() => {});
     // Drop stale caches from older builds that hid media upload
     if (window.caches) {
       caches.keys().then((keys) =>
-        Promise.all(keys.filter((k) => k !== "messenger-flow-static-v7").map((k) => caches.delete(k)))
+        Promise.all(keys.filter((k) => k !== "messenger-flow-static-v8").map((k) => caches.delete(k)))
       ).catch(() => {});
     }
   }
