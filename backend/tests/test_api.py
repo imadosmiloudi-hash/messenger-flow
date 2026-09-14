@@ -56,6 +56,50 @@ def test_flow_crud(client, auth_headers):
     assert "(copy)" in r.json()["name"]
 
 
+def test_delete_flow_with_executions(client, auth_headers, db):
+    """DELETE flow succeeds even when FlowExecution rows exist (cascade)."""
+    page = Page(page_id="P-DEL", name="T", access_token="tok", is_connected=True)
+    db.add(page)
+    cust = Customer(page_id="P-DEL", psid="PSID-DEL", display_name="C")
+    db.add(cust)
+    db.commit()
+
+    r = client.post(
+        "/api/flows",
+        headers=auth_headers,
+        json={"name": "Deletable Flow", "description": "", "steps": []},
+    )
+    assert r.status_code == 201
+    flow_id = r.json()["id"]
+
+    db.add(
+        FlowExecution(
+            flow_id=flow_id,
+            customer_id=cust.id,
+            page_id="P-DEL",
+            status=ExecutionStatus.COMPLETED,
+        )
+    )
+    db.add(
+        FlowExecution(
+            flow_id=flow_id,
+            customer_id=cust.id,
+            page_id="P-DEL",
+            status=ExecutionStatus.RUNNING,
+        )
+    )
+    db.commit()
+
+    r = client.delete(f"/api/flows/{flow_id}", headers=auth_headers)
+    assert r.status_code == 204
+
+    assert db.query(Flow).filter(Flow.id == flow_id).first() is None
+    assert db.query(FlowExecution).filter(FlowExecution.flow_id == flow_id).count() == 0
+
+    r = client.delete(f"/api/flows/{flow_id}", headers=auth_headers)
+    assert r.status_code == 404
+
+
 def test_send_and_duplicate_409(client, auth_headers, db):
     # Setup page + customer
     page = Page(page_id="P1", name="Test", access_token="tok", is_connected=True)

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session, joinedload
 
 from app.db import get_db
-from app.models.entities import Flow, FlowStep, User
+from app.models.entities import Flow, FlowExecution, FlowStep, User
 from app.schemas.common import (
     BulkSendRequest,
     BulkSendResponse,
@@ -96,7 +96,21 @@ def update_flow(
 
 @router.delete("/{flow_id}", status_code=204)
 def delete_flow(flow_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    flow = _load_flow(db, flow_id)
+    flow = db.query(Flow).filter(Flow.id == flow_id).first()
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+    # Explicitly remove executions (and their steps via ORM cascade) so FK does not block.
+    # Active executions are cancelled/ignored — user explicitly requested delete.
+    # Relationship cascade on Flow.executions is also configured as a safety net.
+    executions = (
+        db.query(FlowExecution)
+        .options(joinedload(FlowExecution.steps))
+        .filter(FlowExecution.flow_id == flow_id)
+        .all()
+    )
+    for execution in executions:
+        db.delete(execution)
+    db.flush()
     db.delete(flow)
     db.commit()
 

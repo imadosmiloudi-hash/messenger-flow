@@ -1023,14 +1023,18 @@
     }
     const inner = `
       ${error ? `<div class="err-box">${esc(error)}</div>` : ""}
+      <div id="flows-list-err" class="err-box hidden"></div>
       <div class="card">
         <h2>Flows</h2>
         <p class="muted">Create and edit message sequences.</p>
         ${flows.map((f) => `
-          <a href="/flows/${esc(f.id)}" data-link class="list-item">
-            <strong>${esc(f.name)} ${f.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge">Inactive</span>'}</strong>
-            <div class="meta">${esc(f.description || "")} · ${(f.steps || []).length} steps</div>
-          </a>
+          <div class="flow-list-row list-item" data-flow-row="${esc(f.id)}">
+            <a href="/flows/${esc(f.id)}" data-link class="flow-list-link">
+              <strong>${esc(f.name)} ${f.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge">Inactive</span>'}</strong>
+              <div class="meta">${esc(f.description || "")} · ${(f.steps || []).length} steps</div>
+            </a>
+            <button type="button" class="btn danger sm flow-del-btn" data-flow-id="${esc(f.id)}" data-flow-name="${esc(f.name)}">Delete</button>
+          </div>
         `).join("")}
         ${flows.length === 0 && !error
           ? emptyState({
@@ -1070,6 +1074,31 @@
         errEl.textContent = e.message;
         errEl.classList.remove("hidden");
       }
+    });
+    document.querySelectorAll(".flow-del-btn").forEach((btn) => {
+      btn.addEventListener("click", async (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const id = btn.dataset.flowId;
+        const name = btn.dataset.flowName || "this flow";
+        if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+        const errBox = document.getElementById("flows-list-err");
+        if (errBox) {
+          errBox.classList.add("hidden");
+          errBox.textContent = "";
+        }
+        try {
+          await api(`/api/flows/${id}`, { method: "DELETE" });
+          document.querySelector(`[data-flow-row="${id}"]`)?.remove();
+        } catch (e) {
+          if (errBox) {
+            errBox.textContent = e.message;
+            errBox.classList.remove("hidden");
+          } else {
+            alert(e.message);
+          }
+        }
+      });
     });
   }
 
@@ -1656,11 +1685,11 @@
     navigator.serviceWorker.getRegistrations().then((regs) => {
       regs.forEach((r) => r.update());
     }).catch(() => {});
-    navigator.serviceWorker.register("/sw.js?v=20260914d").catch(() => {});
+    navigator.serviceWorker.register("/sw.js?v=20260914e").catch(() => {});
     // Drop stale caches from older builds that hid media upload
     if (window.caches) {
       caches.keys().then((keys) =>
-        Promise.all(keys.filter((k) => k !== "messenger-flow-static-v13").map((k) => caches.delete(k)))
+        Promise.all(keys.filter((k) => k !== "messenger-flow-static-v14").map((k) => caches.delete(k)))
       ).catch(() => {});
     }
   }

@@ -159,7 +159,9 @@ class Flow(Base):
     steps: Mapped[list["FlowStep"]] = relationship(
         back_populates="flow", order_by="FlowStep.position", cascade="all, delete-orphan"
     )
-    executions: Mapped[list["FlowExecution"]] = relationship(back_populates="flow")
+    executions: Mapped[list["FlowExecution"]] = relationship(
+        back_populates="flow", cascade="all, delete-orphan"
+    )
 
 
 class FlowStep(Base):
