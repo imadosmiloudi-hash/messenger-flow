@@ -65,6 +65,70 @@
     }
   }
 
+
+  function initials(name) {
+    const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return "?";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+
+  function iconSvg(name) {
+    const common = 'class="ico-svg" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false"';
+    const icons = {
+      home: `<svg ${common}><path d="M3 11.5 12 4l9 7.5"/><path d="M6.5 10.5V20h11V10.5"/></svg>`,
+      inbox: `<svg ${common}><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M3.5 9h17"/><path d="M9 13h6"/></svg>`,
+      flows: `<svg ${common}><path d="M7 7h7a4 4 0 0 1 0 8H9"/><path d="M7 7 9.5 4.5M7 7l2.5 2.5"/><path d="M17 17H10a4 4 0 0 1 0-8h5"/><path d="M17 17l-2.5 2.5M17 17l-2.5-2.5"/></svg>`,
+      settings: `<svg ${common}><circle cx="12" cy="12" r="3"/><path d="M12 3.5v2.2M12 18.3V20.5M4.9 7.1l1.6 1.5M17.5 15.4l1.6 1.5M3.5 12h2.2M18.3 12H20.5M4.9 16.9l1.6-1.5M17.5 8.6l1.6-1.5"/></svg>`,
+      back: `<svg ${common}><path d="M15 6 9 12l6 6"/></svg>`,
+    };
+    return icons[name] || "";
+  }
+
+  function emptyState({ title, body, actionHref, actionLabel }) {
+    const action = actionHref && actionLabel
+      ? `<a href="${esc(actionHref)}" data-link class="btn sm">${esc(actionLabel)}</a>`
+      : "";
+    return `<div class="empty-state">
+      <h3>${esc(title)}</h3>
+      <p>${esc(body)}</p>
+      ${action}
+    </div>`;
+  }
+
+  function skeletonBlock(kind) {
+    if (kind === "inbox") {
+      return `<div class="skeleton-stack" aria-hidden="true">
+        <div class="skeleton skeleton-line mid"></div>
+        ${[0,1,2,3].map(() => `<div class="skeleton-row">
+          <div class="skeleton skeleton-avatar"></div>
+          <div class="skeleton-stack">
+            <div class="skeleton skeleton-line"></div>
+            <div class="skeleton skeleton-line short"></div>
+          </div>
+        </div>`).join("")}
+      </div>`;
+    }
+    if (kind === "conversation") {
+      return `<div class="skeleton-stack" aria-hidden="true">
+        <div class="skeleton skeleton-bubble"></div>
+        <div class="skeleton skeleton-bubble out"></div>
+        <div class="skeleton skeleton-bubble"></div>
+        <div class="skeleton skeleton-card"></div>
+      </div>`;
+    }
+    // dashboard default
+    return `<div class="skeleton-stack" aria-hidden="true">
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton-metrics">
+        <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+      </div>
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-line"></div>
+      <div class="skeleton skeleton-line mid"></div>
+    </div>`;
+  }
+
   function statusBadge(st) {
     if (!st) return "";
     const cls = st === "COMPLETED" ? "ok" : st === "FAILED" || st === "CANCELLED" ? "err" : "warn";
@@ -101,12 +165,15 @@
     const name = c.customer?.display_name || c.customer?.psid || "Customer";
     return `
       <a href="/inbox/${esc(c.id)}" data-link class="list-item">
-        <div class="list-item-top">
-          <strong>${esc(name)}</strong>
-          ${c.unread_count > 0 ? `<span class="badge warn">${c.unread_count}</span>` : ""}
-          <span class="list-item-time">${fmtTime(c.last_message_at)}</span>
+        <span class="avatar" aria-hidden="true">${esc(initials(name))}</span>
+        <div class="list-item-body">
+          <div class="list-item-top">
+            <strong>${esc(name)}</strong>
+            ${c.unread_count > 0 ? `<span class="badge warn">${c.unread_count}</span>` : ""}
+            <span class="list-item-time">${fmtTime(c.last_message_at)}</span>
+          </div>
+          <div class="meta">${esc(c.last_message_preview || "No messages yet")}</div>
         </div>
-        <div class="meta">${esc(c.last_message_preview || "No messages yet")}</div>
       </a>`;
   }
 
@@ -223,6 +290,7 @@
     const showNav = opts.showNav !== false;
     const showBack = !!opts.showBack;
     const backTo = opts.backTo || "/";
+    const busy = !!opts.busy;
     const route = parseRoute().name;
     const navActive = (n) => (route === n || (n === "dashboard" && route === "dashboard") ? "active" : "");
 
@@ -234,16 +302,16 @@
       <div class="app-shell">
         <header class="topbar">
           <div style="display:flex;align-items:center;gap:4px;min-width:0;flex:1">
-            ${showBack ? `<button type="button" class="back" data-nav="${esc(backTo)}">←</button>` : ""}
+            ${showBack ? `<button type="button" class="back" data-nav="${esc(backTo)}" aria-label="Back">${iconSvg("back")}</button>` : ""}
             <h1>${esc(title)}</h1>
           </div>
         </header>
-        <main class="main">${inner}</main>
-        <nav class="nav-bottom">
-          <a href="/" data-link class="${navActive("dashboard")}"><span class="ico">⌂</span>Home</a>
-          <a href="/inbox" data-link class="${route === "inbox" || route === "conversation" ? "active" : ""}"><span class="ico">✉</span>Inbox</a>
-          <a href="/flows" data-link class="${route === "flows" || route === "flow" ? "active" : ""}"><span class="ico">⟳</span>Flows</a>
-          <a href="/settings" data-link class="${navActive("settings")}"><span class="ico">⚙</span>Settings</a>
+        <main class="main"${busy ? ' aria-busy="true"' : ""}>${inner}</main>
+        <nav class="nav-bottom" aria-label="Primary">
+          <a href="/" data-link class="${navActive("dashboard")}"><span class="ico">${iconSvg("home")}</span>Home</a>
+          <a href="/inbox" data-link class="${route === "inbox" || route === "conversation" ? "active" : ""}"><span class="ico">${iconSvg("inbox")}</span>Inbox</a>
+          <a href="/flows" data-link class="${route === "flows" || route === "flow" ? "active" : ""}"><span class="ico">${iconSvg("flows")}</span>Flows</a>
+          <a href="/settings" data-link class="${navActive("settings")}"><span class="ico">${iconSvg("settings")}</span>Settings</a>
         </nav>
       </div>`;
   }
@@ -262,8 +330,14 @@
       </div>
       <div class="card">
         <form id="login-form">
-          <input class="input" type="email" name="email" placeholder="Email" required autocomplete="username" />
-          <input class="input" type="password" name="password" placeholder="Password" required autocomplete="current-password" />
+          <label class="field">
+            <span class="field-label">Email</span>
+            <input class="input" type="email" name="email" placeholder="you@company.com" required autocomplete="username" />
+          </label>
+          <label class="field">
+            <span class="field-label">Password</span>
+            <input class="input" type="password" name="password" placeholder="••••••••" required autocomplete="current-password" />
+          </label>
           <div id="login-error" class="err-box hidden"></div>
           <button class="btn lg" type="submit">Log in</button>
         </form>
@@ -310,7 +384,7 @@
     const recent = data?.recent_conversations || [];
     const inner = `
       ${error ? `<div class="err-box">${esc(error)}</div>` : ""}
-      ${!data && !error ? `<p class="muted">Loading…</p>` : ""}
+      ${!data && !error ? skeletonBlock("dashboard") : ""}
       ${data ? `
         <div class="card">
           <h2>Page status</h2>
@@ -319,21 +393,35 @@
             : `<p><span class="badge warn">Not connected</span> <a href="/settings" data-link>Connect page →</a></p>`}
           ${page?.last_error ? `<p class="muted">Last error: ${esc(page.last_error)}</p>` : ""}
         </div>
-        <div class="row">
-          <div class="card"><h3>Unread</h3><p style="font-size:1.5rem;margin:0">${data.unread_messages}</p></div>
-          <div class="card"><h3>Running</h3><p style="font-size:1.5rem;margin:0">${data.running_executions}</p></div>
-          <div class="card"><h3>Queued</h3><p style="font-size:1.5rem;margin:0">${data.queued_executions}</p></div>
+        <div class="row metric-grid">
+          <div class="card"><h3>Unread</h3><p class="metric-value">${data.unread_messages}</p></div>
+          <div class="card"><h3>Running</h3><p class="metric-value">${data.running_executions}</p></div>
+          <div class="card"><h3>Queued</h3><p class="metric-value">${data.queued_executions}</p></div>
         </div>
         <div class="card">
           <h2>Recent conversations</h2>
           ${recent.length === 0
-            ? `<p class="muted">No messages yet. Webhook stores inbox only (no auto-reply).</p>`
-            : recent.map((c) => `
+            ? emptyState({
+                title: "No conversations yet",
+                body: "Webhook stores inbox only — never auto-replies. Sync Inbox or wait for the first message.",
+                actionHref: "/inbox",
+                actionLabel: "Open Inbox",
+              })
+            : recent.map((c) => {
+                const name = c.customer?.display_name || c.customer?.psid || c.last_message_preview || "Customer";
+                return `
                 <a href="/inbox/${esc(c.id)}" data-link class="list-item">
-                  <strong>${esc(c.last_message_preview || "(empty)")}</strong>
-                  ${c.unread_count > 0 ? `<span class="badge warn">${c.unread_count}</span>` : ""}
-                  <div class="meta">${fmtTime(c.last_message_at)}</div>
-                </a>`).join("")}
+                  <span class="avatar" aria-hidden="true">${esc(initials(name))}</span>
+                  <div class="list-item-body">
+                    <div class="list-item-top">
+                      <strong>${esc(c.last_message_preview || "(empty)")}</strong>
+                      ${c.unread_count > 0 ? `<span class="badge warn">${c.unread_count}</span>` : ""}
+                      <span class="list-item-time">${fmtTime(c.last_message_at)}</span>
+                    </div>
+                    <div class="meta">${esc(name)}</div>
+                  </div>
+                </a>`;
+              }).join("")}
         </div>
       ` : ""}
     `;
@@ -376,7 +464,14 @@
         <p class="muted">Tap a conversation, then SEND FLOW. Webhook never auto-replies.</p>
         ${syncLine ? `<p class="muted" id="inbox-sync-status">${syncLine}</p>` : `<p class="muted" id="inbox-sync-status">Sync pulls conversations via Composio.</p>`}
         <div id="inbox-list">
-          ${rows.length === 0 && !error ? `<p class="muted">No conversations yet.</p>` : rows.map(inboxItemHtml).join("")}
+          ${rows.length === 0 && !error
+            ? emptyState({
+                title: "Inbox is empty",
+                body: "Tap Sync to pull conversations via Composio, or wait for webhook messages.",
+                actionHref: "/settings",
+                actionLabel: "Check Settings",
+              })
+            : rows.map(inboxItemHtml).join("")}
         </div>
       </div>
     `;
@@ -387,7 +482,13 @@
     const list = document.getElementById("inbox-list");
     if (!list) return;
     if (!rows.length) {
-      list.innerHTML = `<p class="muted">No conversations yet.</p>`;
+      list.innerHTML = emptyState({
+        title: "Inbox is empty",
+        body: "Tap Sync to pull conversations via Composio, or wait for webhook messages.",
+        actionHref: "/settings",
+        actionLabel: "Check Settings",
+      });
+      bindLocalLinks(list);
       return;
     }
     list.innerHTML = rows.map(inboxItemHtml).join("");
@@ -457,13 +558,23 @@
     const active = detail?.active_execution;
     const busyActive = active && (active.status === "QUEUED" || active.status === "RUNNING");
     const msgs = detail?.messages || [];
+    const sendBusyLabel = busyActive
+      ? `<span class="btn-spinner" aria-hidden="true"></span> Flow running…`
+      : "SEND FLOW";
     const inner = `
       ${error ? `<div class="err-box">${esc(error)}</div>` : ""}
+      ${!detail && !error ? skeletonBlock("conversation") : ""}
       <div class="card">
         <div class="msgs" id="msgs">
-          ${msgs.length === 0 && !error ? `<p class="muted">No messages.</p>` : ""}
+          ${msgs.length === 0 && !error ? emptyState({
+            title: "No messages yet",
+            body: "Messages appear here after webhook or Composio sync.",
+          }) : ""}
           ${msgs.map((m) => `
-            <div class="msg ${m.direction === "IN" ? "in" : "out"}">${esc(m.text || "(media)")}</div>
+            <div class="msg ${m.direction === "IN" ? "in" : "out"}">
+              <span class="msg-body">${esc(m.text || "(media)")}</span>
+              <span class="msg-time">${fmtTime(m.created_at)}</span>
+            </div>
           `).join("")}
         </div>
       </div>
@@ -476,10 +587,11 @@
         <select class="input" id="flow-select" ${busyActive ? "disabled" : ""}>
           ${flows.map((f, i) => `<option value="${esc(f.id)}" ${i === 0 ? "selected" : ""}>${esc(f.name)}</option>`).join("")}
         </select>
-        <button class="btn lg" id="send-flow-btn"
+        <button class="btn lg send-cta" id="send-flow-btn"
           data-customer="${esc(detail?.conversation?.customer_id || "")}"
-          ${!detail || !flows.length || busyActive ? "disabled" : ""}>
-          ${busyActive ? "Flow running…" : "SEND FLOW"}
+          ${!detail || !flows.length || busyActive ? "disabled" : ""}
+          ${busyActive ? 'aria-busy="true"' : ""}>
+          ${sendBusyLabel}
         </button>
         ${active && busyActive ? `
           <div class="flex-actions" style="margin-top:10px">
@@ -507,7 +619,8 @@
         const statusEl = document.getElementById("send-status");
         errEl.classList.add("hidden");
         btn.disabled = true;
-        btn.textContent = "Starting…";
+        btn.setAttribute("aria-busy", "true");
+        btn.innerHTML = `<span class="btn-spinner" aria-hidden="true"></span> Starting…`;
         statusEl.textContent = "Queuing execution…";
         try {
           const key = crypto.randomUUID();
@@ -516,13 +629,14 @@
             headers: { "Idempotency-Key": key },
           });
           const st = res?.execution?.status || "QUEUED";
-          statusEl.innerHTML = `Execution ${statusBadge(st)}`;
-          // Refresh view to show active execution
-          setTimeout(() => render(), 400);
+          statusEl.innerHTML = `<span class="ok-box" style="display:inline-block;margin:0;padding:6px 10px">Queued ${statusBadge(st)}</span>`;
+          // Brief success feedback, then refresh view to show active execution
+          setTimeout(() => render(), 500);
         } catch (e) {
           errEl.textContent = e.message || "Send failed";
           errEl.classList.remove("hidden");
           btn.disabled = false;
+          btn.removeAttribute("aria-busy");
           btn.textContent = "SEND FLOW";
           statusEl.textContent = "";
         }
@@ -568,7 +682,12 @@
             <div class="meta">${esc(f.description || "")} · ${(f.steps || []).length} steps</div>
           </a>
         `).join("")}
-        ${flows.length === 0 && !error ? `<p class="muted">No flows yet.</p>` : ""}
+        ${flows.length === 0 && !error
+          ? emptyState({
+              title: "No flows yet",
+              body: "Create your first message sequence in the form below, then SEND FLOW from a conversation.",
+            })
+          : ""}
       </div>
       <div class="card">
         <h2>New flow</h2>
@@ -1107,10 +1226,17 @@
       return;
     }
 
-    root.innerHTML = shell(`<p class="muted">Loading…</p>`, {
-      title: "…",
-      showNav: route.name !== "login",
-    });
+    const skelKind = route.name === "inbox" ? "inbox"
+      : route.name === "conversation" ? "conversation"
+      : "dashboard";
+    root.innerHTML = shell(
+      route.name === "login" ? `<p class="muted">Loading…</p>` : skeletonBlock(skelKind),
+      {
+        title: "…",
+        showNav: route.name !== "login",
+        busy: true,
+      }
+    );
 
     let html = "";
     try {
@@ -1172,11 +1298,11 @@
     navigator.serviceWorker.getRegistrations().then((regs) => {
       regs.forEach((r) => r.update());
     }).catch(() => {});
-    navigator.serviceWorker.register("/sw.js?v=20260913g").catch(() => {});
+    navigator.serviceWorker.register("/sw.js?v=20260914a").catch(() => {});
     // Drop stale caches from older builds that hid media upload
     if (window.caches) {
       caches.keys().then((keys) =>
-        Promise.all(keys.filter((k) => k !== "messenger-flow-static-v8").map((k) => caches.delete(k)))
+        Promise.all(keys.filter((k) => k !== "messenger-flow-static-v10").map((k) => caches.delete(k)))
       ).catch(() => {});
     }
   }

@@ -1,5 +1,8 @@
 # Design System Master File
 
+> **Production brand override:** locked dark neon (`#05070A` / `#0B1220` / primary `#22C55E` / Inter / glass) — teal tokens below are design-system defaults only.
+
+
 > **LOGIC:** When building a specific page, first check `design-system/pages/[page-name].md`.
 > If that file exists, its rules **override** this Master file.
 > If not, strictly follow the rules below.
