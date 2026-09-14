@@ -4,6 +4,9 @@
 
   const TOKEN_KEY = "access_token";
   const REFRESH_KEY = "refresh_token";
+  const INBOX_FLOW_KEY = "mf_inbox_flow_id";
+  let inboxSelectedIds = new Set();
+  let inboxSending = false;
 
   function getToken() {
     return localStorage.getItem(TOKEN_KEY);
@@ -163,18 +166,66 @@
 
   function inboxItemHtml(c) {
     const name = c.customer?.display_name || c.customer?.psid || "Customer";
+    const customerId = c.customer_id || c.customer?.id || "";
+    const checked = customerId && inboxSelectedIds.has(customerId) ? "checked" : "";
+    const selectedCls = checked ? " is-selected" : "";
     return `
-      <a href="/inbox/${esc(c.id)}" data-link class="list-item">
-        <span class="avatar" aria-hidden="true">${esc(initials(name))}</span>
-        <div class="list-item-body">
-          <div class="list-item-top">
-            <strong>${esc(name)}</strong>
-            ${c.unread_count > 0 ? `<span class="badge warn">${c.unread_count}</span>` : ""}
-            <span class="list-item-time">${fmtTime(c.last_message_at)}</span>
+      <div class="list-item inbox-row${selectedCls}" data-customer-id="${esc(customerId)}" data-conversation-id="${esc(c.id)}">
+        <label class="inbox-check-wrap" title="Select">
+          <input type="checkbox" class="inbox-row-check"
+            data-customer-id="${esc(customerId)}"
+            data-conversation-id="${esc(c.id)}"
+            ${checked}
+            aria-label="Select ${esc(name)}" />
+        </label>
+        <a href="/inbox/${esc(c.id)}" data-link class="inbox-row-main">
+          <span class="avatar" aria-hidden="true">${esc(initials(name))}</span>
+          <div class="list-item-body">
+            <div class="list-item-top">
+              <strong>${esc(name)}</strong>
+              ${c.unread_count > 0 ? `<span class="badge warn">${c.unread_count}</span>` : ""}
+              <span class="list-item-time">${fmtTime(c.last_message_at)}</span>
+            </div>
+            <div class="meta">${esc(c.last_message_preview || "No messages yet")}</div>
           </div>
-          <div class="meta">${esc(c.last_message_preview || "No messages yet")}</div>
-        </div>
-      </a>`;
+        </a>
+        <button type="button" class="btn secondary sm icon inbox-row-send"
+          data-customer-id="${esc(customerId)}"
+          title="Send selected flow to this customer"
+          aria-label="Send flow to ${esc(name)}">↗</button>
+      </div>`;
+  }
+
+  function updateInboxSendUi() {
+    const countEl = document.getElementById("inbox-selected-count");
+    const btn = document.getElementById("inbox-send-btn");
+    const flowSelect = document.getElementById("inbox-flow-select");
+    const n = inboxSelectedIds.size;
+    if (countEl) countEl.textContent = `${n} selected`;
+    const hasFlow = !!(flowSelect && flowSelect.value && !flowSelect.disabled);
+    const noFlows = flowSelect && flowSelect.dataset.noFlows === "1";
+    if (btn) {
+      if (inboxSending) {
+        btn.disabled = true;
+      } else {
+        btn.disabled = noFlows || !hasFlow || n < 1;
+      }
+    }
+    document.querySelectorAll(".inbox-row").forEach((row) => {
+      const id = row.dataset.customerId;
+      row.classList.toggle("is-selected", !!(id && inboxSelectedIds.has(id)));
+      const cb = row.querySelector(".inbox-row-check");
+      if (cb) cb.checked = !!(id && inboxSelectedIds.has(id));
+    });
+  }
+
+  function restoreInboxChecks() {
+    document.querySelectorAll(".inbox-row-check").forEach((cb) => {
+      const id = cb.dataset.customerId;
+      cb.checked = !!(id && inboxSelectedIds.has(id));
+      cb.closest(".inbox-row")?.classList.toggle("is-selected", cb.checked);
+    });
+    updateInboxSendUi();
   }
 
   function bindLocalLinks(scope) {
@@ -430,10 +481,16 @@
 
   async function viewInbox() {
     let rows = [];
+    let flows = [];
     let syncStatus = null;
     let error = "";
     try {
       rows = await api("/api/inbox");
+      try {
+        flows = (await api("/api/flows")).filter((f) => f.is_active);
+      } catch (_) {
+        flows = [];
+      }
       try {
         syncStatus = await api("/api/inbox/sync");
       } catch (_) {
@@ -449,10 +506,35 @@
             ? `Last sync: ${fmtTime(syncStatus.synced_at)} · ${esc(String(syncStatus.conversations_upserted || 0))} conversations`
             : "Not synced yet via Composio")
       : "";
+    const savedFlowId = sessionStorage.getItem(INBOX_FLOW_KEY) || "";
+    const noFlows = flows.length === 0;
+    const flowOptions = noFlows
+      ? `<option value="">No active flows</option>`
+      : flows.map((f) => {
+          const sel = f.id === savedFlowId || (!savedFlowId && f.id === flows[0].id) ? "selected" : "";
+          return `<option value="${esc(f.id)}" ${sel}>${esc(f.name)}</option>`;
+        }).join("");
+    const sendDisabled = noFlows || inboxSelectedIds.size < 1 ? "disabled" : "";
     const inner = `
       ${error ? `<div class="err-box">${esc(error)}</div>` : ""}
       <div id="inbox-sync-msg" class="ok-box hidden"></div>
       <div id="inbox-sync-err" class="err-box hidden"></div>
+      <div class="inbox-send-bar" id="inbox-send-bar">
+        <div class="inbox-send-label">Quick SEND FLOW</div>
+        <select class="input" id="inbox-flow-select" ${noFlows ? "disabled" : ""} data-no-flows="${noFlows ? "1" : "0"}">
+          ${flowOptions}
+        </select>
+        <button type="button" class="btn send-cta" id="inbox-send-btn" ${sendDisabled}>SEND FLOW</button>
+        <p class="muted inbox-send-help">Select customers below, pick a flow, send without opening chats.</p>
+        ${noFlows ? `<p class="muted inbox-send-hint">No active flows — <a href="/flows" data-link>create a flow</a> first.</p>` : ""}
+        <div class="inbox-sel-actions">
+          <button type="button" class="btn secondary sm" id="inbox-select-all" ${noFlows ? "disabled" : ""}>Select all</button>
+          <button type="button" class="btn secondary sm" id="inbox-clear-sel">Clear</button>
+          <span class="muted" id="inbox-selected-count">${inboxSelectedIds.size} selected</span>
+        </div>
+        <div id="inbox-send-status" class="muted"></div>
+        <div id="inbox-send-error" class="err-box hidden"></div>
+      </div>
       <div class="card">
         <div class="inbox-toolbar">
           <h2>Inbox</h2>
@@ -461,7 +543,7 @@
             <button type="button" class="btn secondary sm" id="inbox-sync-btn">Sync</button>
           </div>
         </div>
-        <p class="muted">Tap a conversation, then SEND FLOW. Webhook never auto-replies.</p>
+        <p class="muted">Select chats below for Quick SEND FLOW, or tap a name to open. Webhook never auto-replies.</p>
         ${syncLine ? `<p class="muted" id="inbox-sync-status">${syncLine}</p>` : `<p class="muted" id="inbox-sync-status">Sync pulls conversations via Composio.</p>`}
         <div id="inbox-list">
           ${rows.length === 0 && !error
@@ -489,10 +571,12 @@
         actionLabel: "Check Settings",
       });
       bindLocalLinks(list);
+      updateInboxSendUi();
       return;
     }
     list.innerHTML = rows.map(inboxItemHtml).join("");
     bindLocalLinks(list);
+    restoreInboxChecks();
   }
 
   async function quietInboxSync(announce) {
@@ -514,7 +598,129 @@
     return data;
   }
 
+  async function inboxSendOne(flowId, customerId) {
+    const key = crypto.randomUUID();
+    await api(`/api/flows/${flowId}/customers/${customerId}/send`, {
+      method: "POST",
+      headers: { "Idempotency-Key": key },
+    });
+  }
+
   function bindInbox() {
+    const flowSelect = document.getElementById("inbox-flow-select");
+    const sendBtn = document.getElementById("inbox-send-btn");
+    const statusEl = document.getElementById("inbox-send-status");
+    const errEl = document.getElementById("inbox-send-error");
+    const list = document.getElementById("inbox-list");
+
+    if (flowSelect && !flowSelect.disabled && flowSelect.value) {
+      sessionStorage.setItem(INBOX_FLOW_KEY, flowSelect.value);
+    }
+    flowSelect?.addEventListener("change", () => {
+      if (flowSelect.value) sessionStorage.setItem(INBOX_FLOW_KEY, flowSelect.value);
+      updateInboxSendUi();
+    });
+
+    document.getElementById("inbox-select-all")?.addEventListener("click", () => {
+      document.querySelectorAll(".inbox-row-check").forEach((cb) => {
+        const id = cb.dataset.customerId;
+        if (id) {
+          inboxSelectedIds.add(id);
+          cb.checked = true;
+        }
+      });
+      updateInboxSendUi();
+    });
+
+    document.getElementById("inbox-clear-sel")?.addEventListener("click", () => {
+      inboxSelectedIds.clear();
+      updateInboxSendUi();
+      if (statusEl) statusEl.textContent = "";
+      errEl?.classList.add("hidden");
+    });
+
+    list?.addEventListener("change", (ev) => {
+      const cb = ev.target.closest(".inbox-row-check");
+      if (!cb) return;
+      const id = cb.dataset.customerId;
+      if (!id) return;
+      if (cb.checked) inboxSelectedIds.add(id);
+      else inboxSelectedIds.delete(id);
+      updateInboxSendUi();
+    });
+
+    list?.addEventListener("click", async (ev) => {
+      const oneBtn = ev.target.closest(".inbox-row-send");
+      if (!oneBtn) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const customerId = oneBtn.dataset.customerId;
+      const flowId = flowSelect?.value;
+      if (!customerId || !flowId || flowSelect?.disabled) {
+        if (errEl) {
+          errEl.textContent = flowSelect?.disabled
+            ? "Create an active flow first"
+            : "Pick a flow above first";
+          errEl.classList.remove("hidden");
+        }
+        return;
+      }
+      errEl?.classList.add("hidden");
+      oneBtn.disabled = true;
+      try {
+        await inboxSendOne(flowId, customerId);
+        if (statusEl) statusEl.textContent = "Queued 1 · Failed 0";
+        inboxSelectedIds.delete(customerId);
+        updateInboxSendUi();
+      } catch (ex) {
+        if (errEl) {
+          errEl.textContent = ex.message || "Send failed";
+          errEl.classList.remove("hidden");
+        }
+        if (statusEl) statusEl.textContent = "Queued 0 · Failed 1";
+      } finally {
+        oneBtn.disabled = false;
+      }
+    });
+
+    sendBtn?.addEventListener("click", async () => {
+      const flowId = flowSelect?.value;
+      if (!flowId || flowSelect?.disabled || inboxSelectedIds.size < 1 || inboxSending) return;
+      const targets = Array.from(inboxSelectedIds);
+      inboxSending = true;
+      errEl?.classList.add("hidden");
+      sendBtn.disabled = true;
+      sendBtn.setAttribute("aria-busy", "true");
+      sendBtn.innerHTML = `<span class="btn-spinner" aria-hidden="true"></span> Sending…`;
+      let ok = 0;
+      let fail = 0;
+      const failures = [];
+      for (let i = 0; i < targets.length; i++) {
+        const customerId = targets[i];
+        if (statusEl) statusEl.textContent = `Sending ${i + 1}/${targets.length}…`;
+        try {
+          await inboxSendOne(flowId, customerId);
+          ok += 1;
+          inboxSelectedIds.delete(customerId);
+        } catch (ex) {
+          fail += 1;
+          failures.push(ex.message || "failed");
+        }
+        updateInboxSendUi();
+      }
+      inboxSending = false;
+      sendBtn.removeAttribute("aria-busy");
+      sendBtn.innerHTML = "SEND FLOW";
+      if (statusEl) statusEl.textContent = `Queued ${ok} · Failed ${fail}`;
+      if (fail && errEl) {
+        errEl.textContent = failures.slice(0, 3).join(" · ") + (failures.length > 3 ? "…" : "");
+        errEl.classList.remove("hidden");
+      }
+      updateInboxSendUi();
+    });
+
+    updateInboxSendUi();
+
     document.getElementById("inbox-sync-btn")?.addEventListener("click", async () => {
       const btn = document.getElementById("inbox-sync-btn");
       const msg = document.getElementById("inbox-sync-msg");

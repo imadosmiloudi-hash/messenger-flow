@@ -1,4 +1,4 @@
-const CACHE = 'messenger-flow-static-v10';
+const CACHE = 'messenger-flow-static-v11';
 const PRECACHE = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/favicon.ico', '/favicon-32.png'];
 
 self.addEventListener('install', (event) => {
