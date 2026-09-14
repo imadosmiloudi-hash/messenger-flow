@@ -34,13 +34,13 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     login_rate_limit: str = "10/minute"
-    send_rate_limit: str = "30/minute"
+    send_rate_limit: str = "120/minute"
 
     media_upload_dir: str = "./uploads"
     max_upload_mb: int = 25
 
     # Micro-gap between sequential media sends in one step (ms) to avoid Meta/Composio rate limits
-    flow_media_gap_ms: int = 100
+    flow_media_gap_ms: int = 40
 
     @property
     def cors_origin_list(self) -> list[str]:

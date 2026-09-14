@@ -7,6 +7,11 @@
   const INBOX_FLOW_KEY = "mf_inbox_flow_id";
   let inboxSelectedIds = new Set();
   let inboxSending = false;
+  let inboxListHash = "";
+  let inboxEtag = null;
+  let inboxRowSigs = {};
+  const INBOX_LIGHT_MS = 1000;
+  const INBOX_HEAVY_MS = 17000; // Composio sync ~15–20s
 
   function getToken() {
     return localStorage.getItem(TOKEN_KEY);
@@ -36,6 +41,14 @@
       }
       throw new Error("Unauthorized — please log in");
     }
+    // Optional 304 handling for conditional GETs (If-None-Match)
+    if (res.status === 304) {
+      const err = new Error("Not Modified");
+      err.status = 304;
+      err.etag = res.headers.get("ETag");
+      err.notModified = true;
+      throw err;
+    }
     if (!res.ok) {
       let detail = res.statusText;
       try {
@@ -46,7 +59,14 @@
     }
     if (res.status === 204) return undefined;
     const ct = res.headers.get("content-type") || "";
-    if (ct.includes("application/json")) return res.json();
+    if (ct.includes("application/json")) {
+      const data = await res.json();
+      const etag = res.headers.get("ETag");
+      if (etag && data && typeof data === "object") {
+        try { Object.defineProperty(data, "__etag", { value: etag, enumerable: false }); } catch (_) {}
+      }
+      return data;
+    }
     return undefined;
   }
 
@@ -164,13 +184,28 @@
     return "";
   }
 
-  function inboxItemHtml(c) {
+  function rowSig(c) {
+    return [
+      c.id || "",
+      c.last_message_at || "",
+      c.unread_count ?? 0,
+      c.last_message_preview || "",
+    ].join("|");
+  }
+
+  function inboxRowsHash(rows) {
+    return (rows || []).map(rowSig).join("\n");
+  }
+
+  function inboxItemHtml(c, opts) {
     const name = c.customer?.display_name || c.customer?.psid || "Customer";
     const customerId = c.customer_id || c.customer?.id || "";
     const checked = customerId && inboxSelectedIds.has(customerId) ? "checked" : "";
     const selectedCls = checked ? " is-selected" : "";
+    const pulseCls = opts && opts.pulse ? " inbox-row-pulse" : "";
+    const sig = rowSig(c);
     return `
-      <div class="list-item inbox-row${selectedCls}" data-customer-id="${esc(customerId)}" data-conversation-id="${esc(c.id)}">
+      <div class="list-item inbox-row${selectedCls}${pulseCls}" data-customer-id="${esc(customerId)}" data-conversation-id="${esc(c.id)}" data-row-sig="${esc(sig)}">
         <label class="inbox-check-wrap" title="Select">
           <input type="checkbox" class="inbox-row-check"
             data-customer-id="${esc(customerId)}"
@@ -542,7 +577,7 @@
           <div class="inbox-toolbar">
             <h2>Chats</h2>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <span class="sync-pill">Auto-sync 1s</span>
+              <span class="sync-pill" id="inbox-sync-pill" title="Light list poll every 1s; Composio sync about every 15–20s">Live list 1s · Composio sync ~15s</span>
               <button type="button" class="btn secondary sm" id="inbox-sync-btn">Sync</button>
             </div>
           </div>
@@ -564,7 +599,7 @@
     return shell(inner, { title: "Inbox" });
   }
 
-  function paintInboxRows(rows) {
+  function paintInboxRows(rows, { pulseChanged } = { pulseChanged: false }) {
     const list = document.getElementById("inbox-list");
     if (!list) return;
     if (!rows.length) {
@@ -574,16 +609,55 @@
         actionHref: "/settings",
         actionLabel: "Check Settings",
       });
+      inboxListHash = "";
+      inboxRowSigs = {};
       bindLocalLinks(list);
       updateInboxSendUi();
       return;
     }
-    list.innerHTML = rows.map(inboxItemHtml).join("");
+    const nextSigs = {};
+    list.innerHTML = rows.map((c) => {
+      const sig = rowSig(c);
+      nextSigs[c.id] = sig;
+      const pulse = pulseChanged && inboxRowSigs[c.id] !== sig;
+      return inboxItemHtml(c, { pulse });
+    }).join("");
+    inboxRowSigs = nextSigs;
+    inboxListHash = inboxRowsHash(rows);
     bindLocalLinks(list);
     restoreInboxChecks();
+    // Clear pulse class after animation
+    if (pulseChanged) {
+      setTimeout(() => {
+        list.querySelectorAll(".inbox-row-pulse").forEach((el) => el.classList.remove("inbox-row-pulse"));
+      }, 1200);
+    }
   }
 
-  async function quietInboxSync(announce) {
+  async function lightInboxPoll() {
+    const list = document.getElementById("inbox-list");
+    if (!list) return;
+    try {
+      const headers = {};
+      if (inboxEtag) headers["If-None-Match"] = inboxEtag;
+      const rows = await api("/api/inbox", { headers });
+      if (rows && rows.__etag) inboxEtag = rows.__etag;
+      const hash = inboxRowsHash(rows || []);
+      if (hash !== inboxListHash) {
+        paintInboxRows(rows || [], { pulseChanged: !!inboxListHash });
+      }
+    } catch (ex) {
+      if (ex && ex.notModified) {
+        if (ex.etag) inboxEtag = ex.etag;
+        return;
+      }
+      // soft-fail light poll
+    }
+  }
+
+  async function heavyInboxSync(announce) {
+    // Pause heavy Composio sync while bulk SEND is in progress; keep light poll
+    if (inboxSending && !announce) return;
     const msg = document.getElementById("inbox-sync-msg");
     const err = document.getElementById("inbox-sync-err");
     const statusEl = document.getElementById("inbox-sync-status");
@@ -595,11 +669,26 @@
     if (statusEl) {
       statusEl.textContent = data.error
         ? `Last sync failed: ${data.error}`
-        : `Last sync: ${fmtTime(data.synced_at)} · ${data.conversations_upserted || 0} conversations`;
+        : `Last sync: ${fmtTime(data.synced_at)} · ${data.conversations_upserted || 0} conversations · Live list 1s · Composio ~15s`;
     }
-    const rows = await api("/api/inbox");
-    paintInboxRows(rows);
+    // Force list refresh after heavy sync (clear etag so we always re-fetch)
+    inboxEtag = null;
+    try {
+      const rows = await api("/api/inbox");
+      if (rows && rows.__etag) inboxEtag = rows.__etag;
+      const hash = inboxRowsHash(rows || []);
+      if (hash !== inboxListHash) {
+        paintInboxRows(rows || [], { pulseChanged: !!inboxListHash });
+      } else {
+        // still ok — hash unchanged
+      }
+    } catch (_) { /* ignore */ }
     return data;
+  }
+
+  // Back-compat alias used by sync button / first open
+  async function quietInboxSync(announce) {
+    return heavyInboxSync(announce);
   }
 
   async function inboxSendOne(flowId, customerId) {
@@ -610,7 +699,47 @@
     });
   }
 
+  async function inboxSendBulk(flowId, customerIds) {
+    try {
+      const data = await api(`/api/flows/${flowId}/send-bulk`, {
+        method: "POST",
+        body: JSON.stringify({ customer_ids: customerIds }),
+      });
+      return data;
+    } catch (ex) {
+      // Fallback: sequential single sends if bulk endpoint unavailable
+      if (String(ex.message || "").includes("Not Found") || String(ex.message || "").includes("404")) {
+        const results = [];
+        for (const customerId of customerIds) {
+          try {
+            await inboxSendOne(flowId, customerId);
+            results.push({ customer_id: customerId, ok: true });
+          } catch (e2) {
+            results.push({ customer_id: customerId, ok: false, error: e2.message || "failed" });
+          }
+        }
+        return { results };
+      }
+      throw ex;
+    }
+  }
+
   function bindInbox() {
+    // Seed list hash from initial server-rendered rows so 1s poll can detect changes
+    try {
+      const initialRows = Array.from(document.querySelectorAll("#inbox-list .inbox-row")).map((el) => ({
+        id: el.dataset.conversationId || "",
+        last_message_at: "",
+        unread_count: 0,
+        last_message_preview: "",
+        _sig: el.dataset.rowSig || "",
+      }));
+      if (initialRows.length) {
+        inboxListHash = initialRows.map((r) => r._sig).join("\n");
+        inboxRowSigs = {};
+        initialRows.forEach((r) => { if (r.id) inboxRowSigs[r.id] = r._sig; });
+      }
+    } catch (_) { /* ignore */ }
     const flowSelect = document.getElementById("inbox-flow-select");
     const sendBtn = document.getElementById("inbox-send-btn");
     const statusEl = document.getElementById("inbox-send-status");
@@ -696,21 +825,25 @@
       sendBtn.disabled = true;
       sendBtn.setAttribute("aria-busy", "true");
       sendBtn.innerHTML = `<span class="btn-spinner" aria-hidden="true"></span> Sending…`;
+      if (statusEl) statusEl.textContent = `Sending ${targets.length}…`;
       let ok = 0;
       let fail = 0;
       const failures = [];
-      for (let i = 0; i < targets.length; i++) {
-        const customerId = targets[i];
-        if (statusEl) statusEl.textContent = `Sending ${i + 1}/${targets.length}…`;
-        try {
-          await inboxSendOne(flowId, customerId);
-          ok += 1;
-          inboxSelectedIds.delete(customerId);
-        } catch (ex) {
-          fail += 1;
-          failures.push(ex.message || "failed");
+      try {
+        const data = await inboxSendBulk(flowId, targets);
+        const results = data?.results || [];
+        for (const r of results) {
+          if (r.ok) {
+            ok += 1;
+            inboxSelectedIds.delete(r.customer_id);
+          } else {
+            fail += 1;
+            failures.push(r.error || "failed");
+          }
         }
-        updateInboxSendUi();
+      } catch (ex) {
+        fail = targets.length;
+        failures.push(ex.message || "Bulk send failed");
       }
       inboxSending = false;
       sendBtn.removeAttribute("aria-busy");
@@ -721,6 +854,8 @@
         errEl.classList.remove("hidden");
       }
       updateInboxSendUi();
+      // Heavy sync after bulk completes (list stays on light poll throughout)
+      heavyInboxSync(false).catch(() => {});
     });
 
     updateInboxSendUi();
@@ -749,9 +884,14 @@
         }
       }
     });
-    window.__inboxSyncTimer = setInterval(() => {
-      quietInboxSync(false).catch(() => {});
-    }, 1000);
+    // First inbox open: one heavy Composio sync, then cadence
+    heavyInboxSync(false).catch(() => {});
+    window.__inboxLightTimer = setInterval(() => {
+      lightInboxPoll().catch(() => {});
+    }, INBOX_LIGHT_MS);
+    window.__inboxHeavyTimer = setInterval(() => {
+      heavyInboxSync(false).catch(() => {});
+    }, INBOX_HEAVY_MS);
   }
 
   async function viewConversation(id) {
@@ -1430,6 +1570,14 @@
       clearInterval(window.__inboxSyncTimer);
       window.__inboxSyncTimer = null;
     }
+    if (window.__inboxLightTimer) {
+      clearInterval(window.__inboxLightTimer);
+      window.__inboxLightTimer = null;
+    }
+    if (window.__inboxHeavyTimer) {
+      clearInterval(window.__inboxHeavyTimer);
+      window.__inboxHeavyTimer = null;
+    }
     const route = parseRoute();
     if (route.name !== "login" && !getToken()) {
       navigate("/login", true);
@@ -1508,11 +1656,11 @@
     navigator.serviceWorker.getRegistrations().then((regs) => {
       regs.forEach((r) => r.update());
     }).catch(() => {});
-    navigator.serviceWorker.register("/sw.js?v=20260914a").catch(() => {});
+    navigator.serviceWorker.register("/sw.js?v=20260914d").catch(() => {});
     // Drop stale caches from older builds that hid media upload
     if (window.caches) {
       caches.keys().then((keys) =>
-        Promise.all(keys.filter((k) => k !== "messenger-flow-static-v10").map((k) => caches.delete(k)))
+        Promise.all(keys.filter((k) => k !== "messenger-flow-static-v13").map((k) => caches.delete(k)))
       ).catch(() => {});
     }
   }

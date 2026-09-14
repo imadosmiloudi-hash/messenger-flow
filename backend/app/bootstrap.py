@@ -30,6 +30,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_page_provider_column()
     _ensure_flow_step_media_asset_ids_column()
+    _ensure_performance_indexes()
     db = SessionLocal()
     try:
         ensure_admin(db)
@@ -71,6 +72,33 @@ def _ensure_flow_step_media_asset_ids_column() -> None:
             conn.execute(text("ALTER TABLE flow_steps ADD COLUMN media_asset_ids TEXT"))
     except Exception:
         # Best-effort; fresh DBs already have the column via create_all
+        pass
+
+
+
+def _ensure_performance_indexes() -> None:
+    """Create commonly queried indexes if missing (safe for SQLite + Postgres)."""
+    statements = [
+        "CREATE INDEX IF NOT EXISTS ix_conversations_last_message_at ON conversations (last_message_at)",
+        "CREATE INDEX IF NOT EXISTS ix_incoming_messages_conv_created ON incoming_messages (conversation_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_exec_customer_status ON flow_executions (customer_id, status)",
+    ]
+    try:
+        insp = inspect(engine)
+        tables = set(insp.get_table_names())
+        with engine.begin() as conn:
+            for stmt in statements:
+                if "conversations" in stmt and "conversations" not in tables:
+                    continue
+                if "incoming_messages" in stmt and "incoming_messages" not in tables:
+                    continue
+                if "flow_executions" in stmt and "flow_executions" not in tables:
+                    continue
+                try:
+                    conn.execute(text(stmt))
+                except Exception:
+                    pass
+    except Exception:
         pass
 
 

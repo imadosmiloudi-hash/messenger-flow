@@ -112,6 +112,10 @@ class Conversation(Base):
     customer: Mapped["Customer"] = relationship(back_populates="conversations")
     messages: Mapped[list["IncomingMessage"]] = relationship(back_populates="conversation")
 
+    __table_args__ = (
+        Index("ix_conversations_last_message_at", "last_message_at"),
+    )
+
 
 class IncomingMessage(Base):
     __tablename__ = "incoming_messages"
@@ -134,6 +138,10 @@ class IncomingMessage(Base):
 
     customer: Mapped["Customer"] = relationship(back_populates="messages")
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+
+    __table_args__ = (
+        Index("ix_incoming_messages_conv_created", "conversation_id", "created_at"),
+    )
 
 
 class Flow(Base):
@@ -205,6 +213,7 @@ class FlowExecution(Base):
 
     __table_args__ = (
         Index("ix_exec_customer_flow_status", "customer_id", "flow_id", "status"),
+        Index("ix_exec_customer_status", "customer_id", "status"),
     )
 
 

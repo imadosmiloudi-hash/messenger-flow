@@ -4,6 +4,9 @@ from sqlalchemy.orm import Session, joinedload
 from app.db import get_db
 from app.models.entities import Flow, FlowStep, User
 from app.schemas.common import (
+    BulkSendRequest,
+    BulkSendResponse,
+    BulkSendResultItem,
     FlowCreate,
     FlowExecutionOut,
     FlowOut,
@@ -229,3 +232,69 @@ def send_flow(
         idempotency_key=idempotency_key,
     )
     return SendFlowResponse(execution=FlowExecutionOut.model_validate(execution), queued=True)
+
+
+@router.post("/{flow_id}/send-bulk", response_model=BulkSendResponse)
+def send_flow_bulk(
+    flow_id: str,
+    body: BulkSendRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Start flow executions for many customers sequentially with per-customer results.
+
+    Reuses start_flow_execution + active-execution guard + idempotency.
+    Keys: optional body.idempotency_keys[customer_id], else server-generated.
+    """
+    import uuid
+
+    results: list[BulkSendResultItem] = []
+    key_map = body.idempotency_keys or {}
+    # De-dupe while preserving order
+    seen: set[str] = set()
+    customer_ids: list[str] = []
+    for cid in body.customer_ids:
+        if cid and cid not in seen:
+            seen.add(cid)
+            customer_ids.append(cid)
+
+    for customer_id in customer_ids:
+        idem = key_map.get(customer_id) or f"bulk-{flow_id}-{customer_id}-{uuid.uuid4()}"
+        try:
+            execution = start_flow_execution(
+                db,
+                flow_id=flow_id,
+                customer_id=customer_id,
+                user_id=user.id,
+                idempotency_key=idem,
+            )
+            results.append(
+                BulkSendResultItem(
+                    customer_id=customer_id,
+                    ok=True,
+                    execution_id=execution.id,
+                    error=None,
+                )
+            )
+        except HTTPException as exc:
+            detail = exc.detail
+            if not isinstance(detail, str):
+                detail = str(detail)
+            results.append(
+                BulkSendResultItem(
+                    customer_id=customer_id,
+                    ok=False,
+                    execution_id=None,
+                    error=detail,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            results.append(
+                BulkSendResultItem(
+                    customer_id=customer_id,
+                    ok=False,
+                    execution_id=None,
+                    error=str(exc),
+                )
+            )
+    return BulkSendResponse(results=results)

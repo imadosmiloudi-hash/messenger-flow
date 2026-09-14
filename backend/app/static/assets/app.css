@@ -372,6 +372,17 @@ button, a, .list-item, .media-upload-label, label.check {
   50% { opacity: 0.55; }
 }
 
+
+/* Subtle pulse when inbox row content changes (light poll hash diff) */
+.inbox-row.inbox-row-pulse {
+  animation: inbox-row-flash 1.1s ease-out;
+}
+@keyframes inbox-row-flash {
+  0% { background: rgba(34, 197, 94, 0.22); box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.45); }
+  100% { background: transparent; box-shadow: none; }
+}
+
+
 /* —— Forms —— */
 .field {
   display: block;

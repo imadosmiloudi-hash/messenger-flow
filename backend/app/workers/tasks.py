@@ -65,10 +65,52 @@ def _use_composio(page: Page) -> bool:
 def _media_gap_seconds() -> float:
     """Tiny gap between sequential media sends to avoid Meta/Composio hard rate-limit fails."""
     try:
-        ms = int(get_settings().flow_media_gap_ms or 100)
+        ms = int(get_settings().flow_media_gap_ms or 40)
     except Exception:
-        ms = 100
+        ms = 40
     return max(0.0, ms / 1000.0)
+
+
+def _is_transient_send_error(exc: Exception) -> bool:
+    """Retry once on rate limits / 5xx / network-ish provider errors."""
+    status = getattr(exc, "status_code", None)
+    if status in (408, 425, 429, 500, 502, 503, 504):
+        return True
+    code = getattr(exc, "code", None)
+    # Meta Graph rate-limit / temporary codes commonly seen
+    if code in (4, 17, 32, 613, 80001, 80002):
+        return True
+    msg = (getattr(exc, "operator_message", None) or str(exc) or "").lower()
+    needles = (
+        "rate limit",
+        "too many",
+        "timeout",
+        "timed out",
+        "temporarily",
+        "try again",
+        "retry",
+        "connection",
+        "network",
+        "unavailable",
+        "503",
+        "502",
+        "500",
+        "429",
+    )
+    return any(n in msg for n in needles)
+
+
+def _call_with_retry(fn, *args, retries: int = 1, backoff_s: float = 0.45):
+    """Invoke send fn; on transient Composio/Meta errors retry once with short backoff."""
+    attempt = 0
+    while True:
+        try:
+            return fn(*args)
+        except (MetaAPIError, ComposioAPIError) as exc:
+            if attempt >= retries or not _is_transient_send_error(exc):
+                raise
+            attempt += 1
+            time.sleep(backoff_s * attempt)
 
 
 def _resolve_media_urls(db, step) -> list[str]:
@@ -177,13 +219,19 @@ def run_flow_execution(execution_id: str) -> None:
                 elif step.step_type == StepType.TEXT:
                     text = step.content or ""
                     if use_composio:
-                        result = composio_client.send_text(
-                            page.page_id, customer.psid, text
+                        result = _call_with_retry(
+                            composio_client.send_text,
+                            page.page_id,
+                            customer.psid,
+                            text,
                         )
                         meta_mid = extract_message_id(result)
                     else:
-                        result = meta_client.send_text(
-                            page.page_id, customer.psid, text
+                        result = _call_with_retry(
+                            meta_client.send_text,
+                            page.page_id,
+                            customer.psid,
+                            text,
                         )
                         meta_mid = result.get("message_id")
                 elif step.step_type in (StepType.IMAGE, StepType.AUDIO, StepType.VIDEO):
@@ -197,13 +245,21 @@ def run_flow_execution(execution_id: str) -> None:
                         if j > 0 and gap_s > 0:
                             time.sleep(gap_s)
                         if use_composio:
-                            result = composio_client.send_media(
-                                page.page_id, customer.psid, att_type, url
+                            result = _call_with_retry(
+                                composio_client.send_media,
+                                page.page_id,
+                                customer.psid,
+                                att_type,
+                                url,
                             )
                             meta_mid = extract_message_id(result)
                         else:
-                            result = meta_client.send_attachment(
-                                page.page_id, customer.psid, att_type, url
+                            result = _call_with_retry(
+                                meta_client.send_attachment,
+                                page.page_id,
+                                customer.psid,
+                                att_type,
+                                url,
                             )
                             meta_mid = result.get("message_id")
                 else:

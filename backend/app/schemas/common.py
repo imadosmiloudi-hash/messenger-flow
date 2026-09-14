@@ -220,6 +220,23 @@ class SendFlowResponse(BaseModel):
     queued: bool = True
 
 
+class BulkSendRequest(BaseModel):
+    customer_ids: list[str] = Field(min_length=1)
+    # Optional per-customer idempotency keys; server generates when missing
+    idempotency_keys: dict[str, str] | None = None
+
+
+class BulkSendResultItem(BaseModel):
+    customer_id: str
+    ok: bool
+    execution_id: str | None = None
+    error: str | None = None
+
+
+class BulkSendResponse(BaseModel):
+    results: list[BulkSendResultItem]
+
+
 # Media
 class MediaAssetOut(ORMModel):
     id: str

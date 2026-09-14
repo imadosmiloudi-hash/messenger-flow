@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import threading
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import get_settings
@@ -41,6 +43,76 @@ router = APIRouter(prefix="/api", tags=["inbox"])
 
 SYNC_SETTING_KEY = "inbox_last_sync"
 DEFAULT_PAGE_ID = "106896232178599"
+INBOX_SYNC_LOCK_KEY = "messenger_flow:inbox_sync_lock"
+INBOX_SYNC_LOCK_TTL = 120
+
+_local_sync_lock = threading.Lock()
+
+
+def _try_acquire_sync_lock():
+    """Single-flight lock for Composio inbox sync. Redis preferred; in-process fallback.
+
+    Returns a token to pass to _release_sync_lock, or None if another sync is running.
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
+    try:
+        from redis import Redis
+
+        r = Redis.from_url(settings.redis_url, socket_connect_timeout=0.4, socket_timeout=0.4)
+        acquired = r.set(INBOX_SYNC_LOCK_KEY, "1", nx=True, ex=INBOX_SYNC_LOCK_TTL)
+        if acquired:
+            return ("redis", r)
+        return None
+    except Exception:
+        if _local_sync_lock.acquire(blocking=False):
+            return ("local", None)
+        return None
+
+
+def _release_sync_lock(token) -> None:
+    if not token:
+        return
+    kind, handle = token
+    if kind == "redis" and handle is not None:
+        try:
+            handle.delete(INBOX_SYNC_LOCK_KEY)
+        except Exception:
+            pass
+    elif kind == "local":
+        try:
+            _local_sync_lock.release()
+        except RuntimeError:
+            pass
+
+
+def _inbox_etag(rows: list) -> str:
+    """Weak etag from max(last_message_at) + row count — cheap unchanged check."""
+    max_at = None
+    for c in rows:
+        ts = getattr(c, "last_message_at", None)
+        if ts is not None and (max_at is None or ts > max_at):
+            max_at = ts
+    src = f"{max_at.isoformat() if max_at else ''}:{len(rows)}"
+    digest = hashlib.sha256(src.encode("utf-8")).hexdigest()[:16]
+    return f'"{digest}"'
+
+
+def _status_to_out(db: Session, status: dict) -> InboxSyncOut:
+    synced_at = None
+    if status.get("synced_at"):
+        synced_at = _parse_dt(status["synced_at"])
+    page_id = status.get("page_id") or _resolve_sync_page_id(db)
+    return InboxSyncOut(
+        ok=bool(status.get("ok", False)) if status else True,
+        page_id=page_id,
+        conversations_upserted=int(status.get("conversations_upserted") or 0),
+        messages_upserted=int(status.get("messages_upserted") or 0),
+        provider=status.get("provider") or "composio",
+        synced_at=synced_at,
+        error=status.get("error"),
+    )
 
 
 def _parse_dt(value) -> datetime | None:
@@ -65,9 +137,11 @@ def _parse_dt(value) -> datetime | None:
 
 @router.get("/inbox", response_model=list[ConversationOut])
 def list_inbox(
+    response: Response,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
     limit: int = Query(50, le=200),
+    if_none_match: str | None = Header(default=None, alias="If-None-Match"),
 ):
     rows = (
         db.query(Conversation)
@@ -76,12 +150,17 @@ def list_inbox(
         .limit(limit)
         .all()
     )
+    etag = _inbox_etag(rows)
+    if if_none_match and if_none_match.strip() == etag:
+        return Response(status_code=304, headers={"ETag": etag})
     out = []
     for c in rows:
         item = ConversationOut.model_validate(c)
         if c.customer:
             item.customer = CustomerOut.model_validate(c.customer)
         out.append(item)
+    response.headers["ETag"] = etag
+    response.headers["Cache-Control"] = "private, no-cache"
     return out
 
 
@@ -160,6 +239,34 @@ def _set_sync_status(db: Session, payload: dict) -> None:
 
 
 def _run_inbox_sync(db: Session, user: User) -> InboxSyncOut:
+    """Coalesce concurrent Composio syncs via single-flight lock."""
+    token = _try_acquire_sync_lock()
+    if token is None:
+        # Another sync is in flight — return last known status (or soft busy)
+        status = _get_sync_status(db)
+        if status:
+            out = _status_to_out(db, status)
+            # Soft signal that we coalesced
+            if out.error is None:
+                out = out.model_copy(update={"ok": True})
+            return out
+        page_id = _resolve_sync_page_id(db)
+        return InboxSyncOut(
+            ok=True,
+            page_id=page_id,
+            conversations_upserted=0,
+            messages_upserted=0,
+            provider="composio",
+            synced_at=None,
+            error=None,
+        )
+    try:
+        return _do_inbox_sync(db, user)
+    finally:
+        _release_sync_lock(token)
+
+
+def _do_inbox_sync(db: Session, user: User) -> InboxSyncOut:
     settings = get_settings()
     if not settings.composio_api_key:
         raise HTTPException(
@@ -366,17 +473,4 @@ def sync_inbox_get(
     """Button-friendly sync: GET ?run=true runs sync; default returns last sync status."""
     if run:
         return _run_inbox_sync(db, user)
-    status = _get_sync_status(db)
-    synced_at = None
-    if status.get("synced_at"):
-        synced_at = _parse_dt(status["synced_at"])
-    page_id = status.get("page_id") or _resolve_sync_page_id(db)
-    return InboxSyncOut(
-        ok=bool(status.get("ok", False)) if status else True,
-        page_id=page_id,
-        conversations_upserted=int(status.get("conversations_upserted") or 0),
-        messages_upserted=int(status.get("messages_upserted") or 0),
-        provider=status.get("provider") or "composio",
-        synced_at=synced_at,
-        error=status.get("error"),
-    )
+    return _status_to_out(db, _get_sync_status(db))
