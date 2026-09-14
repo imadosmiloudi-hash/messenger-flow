@@ -516,45 +516,49 @@
         }).join("");
     const sendDisabled = noFlows || inboxSelectedIds.size < 1 ? "disabled" : "";
     const inner = `
-      ${error ? `<div class="err-box">${esc(error)}</div>` : ""}
-      <div id="inbox-sync-msg" class="ok-box hidden"></div>
-      <div id="inbox-sync-err" class="err-box hidden"></div>
-      <div class="inbox-send-bar" id="inbox-send-bar">
-        <div class="inbox-send-label">Quick SEND FLOW</div>
-        <select class="input" id="inbox-flow-select" ${noFlows ? "disabled" : ""} data-no-flows="${noFlows ? "1" : "0"}">
-          ${flowOptions}
-        </select>
-        <button type="button" class="btn send-cta" id="inbox-send-btn" ${sendDisabled}>SEND FLOW</button>
-        <p class="muted inbox-send-help">Select customers below, pick a flow, send without opening chats.</p>
-        ${noFlows ? `<p class="muted inbox-send-hint">No active flows — <a href="/flows" data-link>create a flow</a> first.</p>` : ""}
-        <div class="inbox-sel-actions">
-          <button type="button" class="btn secondary sm" id="inbox-select-all" ${noFlows ? "disabled" : ""}>Select all</button>
-          <button type="button" class="btn secondary sm" id="inbox-clear-sel">Clear</button>
-          <span class="muted" id="inbox-selected-count">${inboxSelectedIds.size} selected</span>
-        </div>
-        <div id="inbox-send-status" class="muted"></div>
-        <div id="inbox-send-error" class="err-box hidden"></div>
-      </div>
-      <div class="card">
-        <div class="inbox-toolbar">
-          <h2>Inbox</h2>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span class="sync-pill">Auto-sync every 1s</span>
-            <button type="button" class="btn secondary sm" id="inbox-sync-btn">Sync</button>
+      <div class="inbox-page">
+        ${error ? `<div class="err-box">${esc(error)}</div>` : ""}
+        <div id="inbox-sync-msg" class="ok-box hidden"></div>
+        <div id="inbox-sync-err" class="err-box hidden"></div>
+        <section class="inbox-send-bar" id="inbox-send-bar" aria-label="Quick SEND FLOW">
+          <div class="inbox-send-label">Quick SEND FLOW</div>
+          <div class="inbox-send-controls">
+            <select class="input" id="inbox-flow-select" ${noFlows ? "disabled" : ""} data-no-flows="${noFlows ? "1" : "0"}" aria-label="Choose flow">
+              ${flowOptions}
+            </select>
+            <button type="button" class="btn send-cta" id="inbox-send-btn" ${sendDisabled}>SEND FLOW</button>
           </div>
-        </div>
-        <p class="muted">Select chats below for Quick SEND FLOW, or tap a name to open. Webhook never auto-replies.</p>
-        ${syncLine ? `<p class="muted" id="inbox-sync-status">${syncLine}</p>` : `<p class="muted" id="inbox-sync-status">Sync pulls conversations via Composio.</p>`}
-        <div id="inbox-list">
-          ${rows.length === 0 && !error
-            ? emptyState({
-                title: "Inbox is empty",
-                body: "Tap Sync to pull conversations via Composio, or wait for webhook messages.",
-                actionHref: "/settings",
-                actionLabel: "Check Settings",
-              })
-            : rows.map(inboxItemHtml).join("")}
-        </div>
+          <p class="muted inbox-send-help">Select chats below, then send. No need to open each profile.</p>
+          ${noFlows ? `<p class="muted inbox-send-hint">No active flows — <a href="/flows" data-link>create a flow</a> first.</p>` : ""}
+          <div class="inbox-sel-actions">
+            <button type="button" class="btn secondary sm" id="inbox-select-all" ${noFlows ? "disabled" : ""}>Select all</button>
+            <button type="button" class="btn secondary sm" id="inbox-clear-sel">Clear</button>
+            <span class="muted" id="inbox-selected-count">${inboxSelectedIds.size} selected</span>
+          </div>
+          <div id="inbox-send-status" class="muted"></div>
+          <div id="inbox-send-error" class="err-box hidden"></div>
+        </section>
+        <section class="card inbox-list-card">
+          <div class="inbox-toolbar">
+            <h2>Chats</h2>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span class="sync-pill">Auto-sync 1s</span>
+              <button type="button" class="btn secondary sm" id="inbox-sync-btn">Sync</button>
+            </div>
+          </div>
+          <p class="muted" style="margin-top:0">Tap a name to open. Checkboxes select for Quick SEND.</p>
+          ${syncLine ? `<p class="muted" id="inbox-sync-status">${syncLine}</p>` : `<p class="muted" id="inbox-sync-status">Sync pulls conversations via Composio.</p>`}
+          <div id="inbox-list">
+            ${rows.length === 0 && !error
+              ? emptyState({
+                  title: "Inbox is empty",
+                  body: "Tap Sync to pull conversations via Composio, or wait for webhook messages.",
+                  actionHref: "/settings",
+                  actionLabel: "Check Settings",
+                })
+              : rows.map(inboxItemHtml).join("")}
+          </div>
+        </section>
       </div>
     `;
     return shell(inner, { title: "Inbox" });
