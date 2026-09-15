@@ -28,6 +28,7 @@ DEFAULT_COMPOSIO_PAGE_NAME = "IMADS Agency"
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    _ensure_oauth_tables()
     _ensure_page_provider_column()
     _ensure_page_oauth_columns()
     _ensure_flow_step_media_asset_ids_column()
@@ -40,6 +41,52 @@ def init_db() -> None:
         db.commit()
     finally:
         db.close()
+
+
+def _ensure_oauth_tables() -> None:
+    """Ensure connected_accounts + oauth_states exist even if create_all skipped them."""
+    ddl = [
+        """
+        CREATE TABLE IF NOT EXISTS connected_accounts (
+            id VARCHAR(36) PRIMARY KEY,
+            user_id VARCHAR(36) NOT NULL REFERENCES users(id),
+            provider VARCHAR(32) NOT NULL DEFAULT 'facebook',
+            provider_user_id VARCHAR(128),
+            status VARCHAR(32) NOT NULL DEFAULT 'disconnected',
+            encrypted_user_access_token TEXT,
+            token_expires_at TIMESTAMP WITH TIME ZONE,
+            scopes TEXT,
+            last_error TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS oauth_states (
+            state VARCHAR(128) PRIMARY KEY,
+            user_id VARCHAR(36) NOT NULL,
+            expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+        """,
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_connected_account_user_provider ON connected_accounts (user_id, provider)",
+    ]
+    # SQLite-friendly variants without WITH TIME ZONE if needed — try Postgres first then soft-fail
+    with engine.begin() as conn:
+        dialect = engine.dialect.name
+        for stmt in ddl:
+            sql = stmt
+            if dialect == "sqlite":
+                sql = (
+                    sql.replace("TIMESTAMP WITH TIME ZONE", "TIMESTAMP")
+                    .replace("DEFAULT NOW()", "DEFAULT CURRENT_TIMESTAMP")
+                    .replace("REFERENCES users(id)", "")
+                )
+            try:
+                conn.execute(text(sql))
+            except Exception:
+                # Table/index may already exist with slightly different shape
+                pass
 
 
 def _ensure_page_provider_column() -> None:
@@ -63,36 +110,33 @@ def _ensure_page_provider_column() -> None:
 
 def _ensure_page_oauth_columns() -> None:
     """Add OAuth-related pages columns if missing (create_all does not alter existing tables)."""
+    insp = inspect(engine)
     try:
-        insp = inspect(engine)
-        if "pages" not in insp.get_table_names():
-            return
-        cols = {c["name"] for c in insp.get_columns("pages")}
-        alters = []
-        if "connected_account_id" not in cols:
-            alters.append(
-                "ALTER TABLE pages ADD COLUMN connected_account_id VARCHAR(36)"
-            )
-        if "page_image_url" not in cols:
-            alters.append("ALTER TABLE pages ADD COLUMN page_image_url TEXT")
-        if "webhook_subscribed" not in cols:
-            alters.append(
-                "ALTER TABLE pages ADD COLUMN webhook_subscribed BOOLEAN DEFAULT 0"
-            )
-        if "connection_status" not in cols:
-            alters.append(
-                "ALTER TABLE pages ADD COLUMN connection_status VARCHAR(32) DEFAULT 'disconnected'"
-            )
-        if not alters:
-            return
-        with engine.begin() as conn:
-            for stmt in alters:
-                try:
-                    conn.execute(text(stmt))
-                except Exception:
-                    pass
+        insp.clear_cache()
     except Exception:
         pass
+    if "pages" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("pages")}
+    # Postgres-safe defaults (avoid BOOLEAN DEFAULT 0 quirks across dialects)
+    wanted = [
+        ("connected_account_id", "ALTER TABLE pages ADD COLUMN connected_account_id VARCHAR(36)"),
+        ("page_image_url", "ALTER TABLE pages ADD COLUMN page_image_url TEXT"),
+        (
+            "webhook_subscribed",
+            "ALTER TABLE pages ADD COLUMN webhook_subscribed BOOLEAN DEFAULT FALSE",
+        ),
+        (
+            "connection_status",
+            "ALTER TABLE pages ADD COLUMN connection_status VARCHAR(32) DEFAULT 'disconnected'",
+        ),
+    ]
+    for name, stmt in wanted:
+        if name in cols:
+            continue
+        with engine.begin() as conn:
+            conn.execute(text(stmt))
+        cols.add(name)
 
 
 def _ensure_flow_step_media_asset_ids_column() -> None:
