@@ -8,6 +8,7 @@ from app.db import get_db
 from app.models.entities import AuditLog, Page, User
 from app.schemas.common import PageConnectRequest, PageOut
 from app.security.auth import get_current_user
+from app.security.crypto import decrypt_maybe
 from app.services.meta_client import MetaAPIError, MetaClient
 
 router = APIRouter(prefix="/api/pages", tags=["pages"])
@@ -196,10 +197,11 @@ def disconnect_page(db: Session = Depends(get_db), user: User = Depends(get_curr
 def subscribe_webhooks(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Subscribe connected Page to messages webhooks using the stored Page token."""
     page = db.query(Page).filter(Page.is_connected.is_(True)).first()
-    if not page or not page.access_token:
+    token = decrypt_maybe(page.access_token) if page and page.access_token else ""
+    if not page or not token:
         raise HTTPException(status_code=400, detail="No connected page with token")
     try:
-        MetaClient(access_token=page.access_token).subscribe_app(page.page_id, ["messages"])
+        MetaClient(access_token=token).subscribe_app(page.page_id, ["messages"])
         page.last_error = None
         detail = "subscribed"
     except MetaAPIError as exc:

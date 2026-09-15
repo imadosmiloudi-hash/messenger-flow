@@ -64,15 +64,58 @@ class Page(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     page_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), default="")
-    access_token: Mapped[str] = mapped_column(Text, default="")
+    access_token: Mapped[str] = mapped_column(Text, default="")  # Fernet-encrypted when from OAuth
     provider: Mapped[str] = mapped_column(String(32), default="meta")  # meta|composio
     is_connected: Mapped[bool] = mapped_column(Boolean, default=False)
     connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    connected_account_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("connected_accounts.id"), nullable=True
+    )
+    page_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    webhook_subscribed: Mapped[bool] = mapped_column(Boolean, default=False)
+    connection_status: Mapped[str] = mapped_column(
+        String(32), default="disconnected"
+    )  # connected|attention_required|disconnected
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ConnectedAccount(Base):
+    """OAuth-linked account for the operator (one Facebook link per user)."""
+
+    __tablename__ = "connected_accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(32), default="facebook", nullable=False)
+    provider_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(32), default="disconnected"
+    )  # disconnected|connected|attention_required
+    encrypted_user_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scopes: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+    __table_args__ = (UniqueConstraint("user_id", "provider", name="uq_connected_account_user_provider"),)
+
+
+class OAuthState(Base):
+    """DB fallback for OAuth CSRF state when Redis is unavailable."""
+
+    __tablename__ = "oauth_states"
+
+    state: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Customer(Base):

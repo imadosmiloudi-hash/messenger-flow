@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     meta_verify_token: str = "your_webhook_verify_token"
     meta_page_access_token: str = ""
     meta_page_id: str = ""
+    # Optional; defaults to PUBLIC_BASE_URL + /api/integrations/facebook/callback
+    meta_redirect_uri: str = ""
+    meta_oauth_scopes: str = (
+        "pages_show_list,pages_messaging,pages_manage_metadata,"
+        "pages_read_engagement,business_management"
+    )
 
     # Composio (preferred when configured / MESSAGING_PROVIDER=composio)
     composio_api_key: str = ""
@@ -58,6 +64,18 @@ class Settings(BaseSettings):
         if url.startswith("postgresql://") and "+psycopg" not in url.split("://", 1)[0]:
             url = "postgresql+psycopg://" + url[len("postgresql://"):]
         return url
+
+
+    @property
+    def resolved_meta_redirect_uri(self) -> str:
+        if (self.meta_redirect_uri or "").strip():
+            return self.meta_redirect_uri.strip()
+        base = (self.public_base_url or "").rstrip("/")
+        return f"{base}/api/integrations/facebook/callback"
+
+    @property
+    def meta_oauth_scope_list(self) -> list[str]:
+        return [s.strip() for s in (self.meta_oauth_scopes or "").split(",") if s.strip()]
 
     def uses_composio(self) -> bool:
         """Prefer Composio when configured; honor explicit MESSAGING_PROVIDER."""

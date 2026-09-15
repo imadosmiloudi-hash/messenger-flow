@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import Base, SessionLocal, engine
-from app.models.entities import Flow, FlowStep, Page, StepType, User
+from app.models.entities import ConnectedAccount, Flow, FlowStep, OAuthState, Page, StepType, User
 from app.security.auth import get_password_hash
 
 
@@ -29,6 +29,7 @@ DEFAULT_COMPOSIO_PAGE_NAME = "IMADS Agency"
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_page_provider_column()
+    _ensure_page_oauth_columns()
     _ensure_flow_step_media_asset_ids_column()
     _ensure_performance_indexes()
     db = SessionLocal()
@@ -56,6 +57,41 @@ def _ensure_page_provider_column() -> None:
             )
     except Exception:
         # Best-effort; fresh DBs already have the column via create_all
+        pass
+
+
+
+def _ensure_page_oauth_columns() -> None:
+    """Add OAuth-related pages columns if missing (create_all does not alter existing tables)."""
+    try:
+        insp = inspect(engine)
+        if "pages" not in insp.get_table_names():
+            return
+        cols = {c["name"] for c in insp.get_columns("pages")}
+        alters = []
+        if "connected_account_id" not in cols:
+            alters.append(
+                "ALTER TABLE pages ADD COLUMN connected_account_id VARCHAR(36)"
+            )
+        if "page_image_url" not in cols:
+            alters.append("ALTER TABLE pages ADD COLUMN page_image_url TEXT")
+        if "webhook_subscribed" not in cols:
+            alters.append(
+                "ALTER TABLE pages ADD COLUMN webhook_subscribed BOOLEAN DEFAULT 0"
+            )
+        if "connection_status" not in cols:
+            alters.append(
+                "ALTER TABLE pages ADD COLUMN connection_status VARCHAR(32) DEFAULT 'disconnected'"
+            )
+        if not alters:
+            return
+        with engine.begin() as conn:
+            for stmt in alters:
+                try:
+                    conn.execute(text(stmt))
+                except Exception:
+                    pass
+    except Exception:
         pass
 
 

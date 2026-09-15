@@ -353,14 +353,17 @@
   function parseRoute() {
     const path = location.pathname.replace(/\/+$/, "") || "/";
     const parts = path.split("/").filter(Boolean);
-    if (path === "/login") return { name: "login" };
-    if (path === "/" || path === "/dashboard") return { name: "dashboard" };
-    if (path === "/inbox") return { name: "inbox" };
-    if (parts[0] === "inbox" && parts[1]) return { name: "conversation", id: parts[1] };
-    if (path === "/flows") return { name: "flows" };
-    if (parts[0] === "flows" && parts[1]) return { name: "flow", id: parts[1] };
-    if (path === "/settings") return { name: "settings" };
-    return { name: "dashboard" };
+    const qs = new URLSearchParams(location.search || "");
+    const q = {};
+    qs.forEach((v, k) => { q[k] = v; });
+    if (path === "/login") return { name: "login", query: q };
+    if (path === "/" || path === "/dashboard") return { name: "dashboard", query: q };
+    if (path === "/inbox") return { name: "inbox", query: q };
+    if (parts[0] === "inbox" && parts[1]) return { name: "conversation", id: parts[1], query: q };
+    if (path === "/flows") return { name: "flows", query: q };
+    if (parts[0] === "flows" && parts[1]) return { name: "flow", id: parts[1], query: q };
+    if (path === "/settings") return { name: "settings", query: q };
+    return { name: "dashboard", query: q };
   }
 
   function navigate(path, replace) {
@@ -1485,19 +1488,97 @@
   async function viewSettings() {
     let settings = null;
     let page = null;
+    let fbStatus = null;
+    let fbPages = null;
     let error = "";
+    const qs = new URLSearchParams(location.search || "");
+    const fbFlag = qs.get("facebook") || "";
+    const fbReason = qs.get("reason") || "";
     try {
       settings = await api("/api/settings/public");
       page = await api("/api/pages/status");
+      try {
+        fbStatus = await api("/api/integrations/facebook/status");
+        fbPages = await api("/api/integrations/facebook/pages");
+      } catch (fbErr) {
+        /* Meta OAuth optional if app not configured yet */
+        fbStatus = { status: "disconnected", attention_message: fbErr.message };
+        fbPages = { mode: "connected", pages: [] };
+      }
     } catch (e) {
       error = e.message;
     }
     const originHint = `${location.origin}/webhook`;
     const defaultPageId = settings?.meta_page_id_default || "106896232178599";
+    const selectMode = fbFlag === "select" || fbStatus?.status === "select_page" || fbPages?.mode === "select";
+    const selectable = (fbPages?.mode === "select" ? fbPages.pages : []) || [];
+    const fbPage = fbStatus?.page;
+    const fbConnected = fbStatus?.status === "connected" || (fbPage && fbPage.is_connected);
+    let banner = "";
+    if (fbFlag === "connected") banner = `<div class="ok-box">Facebook Page connected successfully.</div>`;
+    else if (fbFlag === "select") banner = `<div class="ok-box">Select which Facebook Page to connect.</div>`;
+    else if (fbFlag === "error") banner = `<div class="err-box">Facebook connect failed${fbReason ? ": " + esc(fbReason) : ""}.</div>`;
+
+    let fbCardBody = "";
+    if (selectMode && selectable.length) {
+      fbCardBody = `
+        <p class="muted">Choose a Page to use for Messenger.</p>
+        <div class="fb-page-list" id="fb-page-list">
+          ${selectable.map((p, i) => `
+            <label class="fb-page-option">
+              <input type="radio" name="fb_page" value="${esc(p.page_id)}" ${i === 0 ? "checked" : ""} />
+              ${p.picture ? `<img class="fb-page-avatar" src="${esc(p.picture)}" alt="" />` : `<span class="fb-page-avatar fb-page-avatar--ph"></span>`}
+              <span class="fb-page-meta">
+                <strong>${esc(p.name || p.page_id)}</strong>
+                <span class="muted">${esc(p.page_id)}</span>
+              </span>
+            </label>
+          `).join("")}
+        </div>
+        <button type="button" class="btn" id="fb-select-btn">Connect Selected Page</button>
+      `;
+    } else if (fbConnected && fbPage) {
+      fbCardBody = `
+        <div class="fb-connected-row">
+          ${fbPage.image_url ? `<img class="fb-page-avatar" src="${esc(fbPage.image_url)}" alt="" />` : `<span class="fb-page-avatar fb-page-avatar--ph"></span>`}
+          <div>
+            <p><span class="badge ok">Connected</span> ${esc(fbPage.name || "")}</p>
+            <p class="muted">Page ID: ${esc(fbPage.page_id || "")}</p>
+            <p class="muted">Webhook: ${fbPage.webhook_subscribed ? `<span class="badge ok">subscribed</span>` : `<span class="badge warn">not subscribed</span>`}</p>
+            <p class="muted">Provider: ${esc(fbPage.provider || "meta")}</p>
+            ${fbStatus?.attention_message ? `<p class="muted">Note: ${esc(fbStatus.attention_message)}</p>` : ""}
+          </div>
+        </div>
+        <div class="fb-actions">
+          <button type="button" class="btn secondary" id="fb-reconnect-btn">Reconnect</button>
+          <button type="button" class="btn danger" id="fb-disconnect-btn">Disconnect</button>
+        </div>
+      `;
+    } else {
+      fbCardBody = `
+        <p class="muted">Sign in with Facebook to link a Page. Tokens are stored encrypted and never sent to the browser.</p>
+        ${fbStatus?.attention_message && fbFlag !== "error" ? `<p class="muted">${esc(fbStatus.attention_message)}</p>` : ""}
+        <button type="button" class="btn" id="fb-connect-btn">Connect Facebook</button>
+      `;
+    }
+
     const inner = `
       ${error ? `<div class="err-box">${esc(error)}</div>` : ""}
+      ${banner}
       <div id="settings-msg" class="ok-box hidden"></div>
       <div id="settings-err" class="err-box hidden"></div>
+
+      <div class="card fb-connect-card">
+        <h2>Connected Accounts</h2>
+        <div class="fb-account-card">
+          <div class="fb-account-head">
+            <strong>Facebook</strong>
+            ${fbConnected ? `<span class="badge ok">Connected</span>` : selectMode ? `<span class="badge warn">Select Page</span>` : `<span class="badge warn">Disconnected</span>`}
+          </div>
+          ${fbCardBody}
+        </div>
+      </div>
+
       <div class="card">
         <h2>Webhook (never auto-replies)</h2>
         ${settings ? `
@@ -1513,38 +1594,113 @@
           <code>${esc(originHint)}</code>
         `}
       </div>
-      <div class="card">
-        <h2>Connect via Composio</h2>
-        <p class="muted">Uses COMPOSIO_* env. No Meta page token required. Default page: IMADS Agency (${esc(defaultPageId)}).</p>
-        <button type="button" class="btn" id="connect-composio-btn">Connect via Composio</button>
-      </div>
-      <div class="card">
-        <h2>Connect Page (manual / Meta token)</h2>
-        ${page?.is_connected
-          ? `<p><span class="badge ok">Connected</span> ${esc(page.name)} (${esc(page.page_id)}) · ${esc(page.provider || "meta")}</p>
-             ${page.last_error ? `<p class="muted">Last error: ${esc(page.last_error)}</p>` : ""}`
-          : `<p><span class="badge warn">Not connected</span></p>`}
-        <form id="connect-form">
-          <input class="input" name="page_id" placeholder="Page ID" required value="${esc(page?.page_id || defaultPageId)}" />
-          <input class="input" name="name" placeholder="Page name (optional)" value="${esc(page?.name || "IMADS Agency")}" />
-          <input class="input" name="access_token" placeholder="Page access token (optional for Composio)" autocomplete="off" />
-          <button class="btn" type="submit">Connect</button>
-        </form>
-        ${page?.is_connected ? `<button class="btn secondary" id="disconnect-btn" style="margin-top:8px">Disconnect</button>` : ""}
-      </div>
+
+      <details class="card settings-advanced">
+        <summary><strong>Advanced / alternate</strong> <span class="muted">Composio &amp; manual token</span></summary>
+        <div class="settings-advanced-body">
+          <h3>Connect via Composio</h3>
+          <p class="muted">Uses COMPOSIO_* env. No Meta page token required. Default page: IMADS Agency (${esc(defaultPageId)}).</p>
+          <button type="button" class="btn secondary" id="connect-composio-btn">Connect via Composio</button>
+          <h3 style="margin-top:16px">Connect Page (manual / Meta token)</h3>
+          ${page?.is_connected
+            ? `<p><span class="badge ok">Connected</span> ${esc(page.name)} (${esc(page.page_id)}) · ${esc(page.provider || "meta")}</p>
+               ${page.last_error ? `<p class="muted">Last error: ${esc(page.last_error)}</p>` : ""}`
+            : `<p><span class="badge warn">Not connected</span></p>`}
+          <form id="connect-form">
+            <input class="input" name="page_id" placeholder="Page ID" required value="${esc(page?.page_id || defaultPageId)}" />
+            <input class="input" name="name" placeholder="Page name (optional)" value="${esc(page?.name || "IMADS Agency")}" />
+            <input class="input" name="access_token" placeholder="Page access token (optional for Composio)" autocomplete="off" />
+            <button class="btn secondary" type="submit">Connect</button>
+          </form>
+          ${page?.is_connected ? `<button class="btn secondary" id="disconnect-btn" style="margin-top:8px">Disconnect</button>` : ""}
+        </div>
+      </details>
+
       <button class="btn danger" id="logout-btn">Log out</button>
     `;
     return shell(inner, { title: "Settings" });
   }
 
   function bindSettings() {
+    const msg = () => document.getElementById("settings-msg");
+    const err = () => document.getElementById("settings-err");
+    const clearFlash = () => {
+      msg()?.classList.add("hidden");
+      err()?.classList.add("hidden");
+    };
+    const showErr = (t) => {
+      const el = err();
+      if (!el) return;
+      el.textContent = t;
+      el.classList.remove("hidden");
+    };
+    const showMsg = (t) => {
+      const el = msg();
+      if (!el) return;
+      el.textContent = t;
+      el.classList.remove("hidden");
+    };
+
+    // Strip OAuth query flags after first paint so refresh is clean
+    if (location.search.includes("facebook=")) {
+      history.replaceState({}, "", "/settings");
+    }
+
+    async function startFacebookOAuth(btn) {
+      clearFlash();
+      if (btn) btn.disabled = true;
+      try {
+        const data = await api("/api/integrations/facebook/connect");
+        if (!data?.authorize_url) throw new Error("No authorize_url returned");
+        window.location.href = data.authorize_url;
+      } catch (ex) {
+        showErr(ex.message);
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    document.getElementById("fb-connect-btn")?.addEventListener("click", (e) => {
+      startFacebookOAuth(e.currentTarget);
+    });
+    document.getElementById("fb-reconnect-btn")?.addEventListener("click", (e) => {
+      startFacebookOAuth(e.currentTarget);
+    });
+    document.getElementById("fb-select-btn")?.addEventListener("click", async (e) => {
+      clearFlash();
+      const btn = e.currentTarget;
+      const selected = document.querySelector('input[name="fb_page"]:checked');
+      if (!selected) {
+        showErr("Select a Page first");
+        return;
+      }
+      btn.disabled = true;
+      try {
+        await api("/api/integrations/facebook/pages/select", {
+          method: "POST",
+          body: JSON.stringify({ page_id: selected.value }),
+        });
+        showMsg("Page connected");
+        navigate("/settings?facebook=connected", true);
+      } catch (ex) {
+        showErr(ex.message);
+        btn.disabled = false;
+      }
+    });
+    document.getElementById("fb-disconnect-btn")?.addEventListener("click", async () => {
+      clearFlash();
+      try {
+        await api("/api/integrations/facebook/disconnect", { method: "POST" });
+        showMsg("Facebook disconnected");
+        render();
+      } catch (ex) {
+        showErr(ex.message);
+      }
+    });
+
     document.getElementById("connect-form")?.addEventListener("submit", async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
-      const msg = document.getElementById("settings-msg");
-      const err = document.getElementById("settings-err");
-      msg.classList.add("hidden");
-      err.classList.add("hidden");
+      clearFlash();
       const token = String(fd.get("access_token") || "").trim();
       try {
         await api("/api/pages/connect", {
@@ -1556,27 +1712,20 @@
             provider: token ? "meta" : "composio",
           }),
         });
-        msg.textContent = "Page connected";
-        msg.classList.remove("hidden");
+        showMsg("Page connected");
         render();
       } catch (ex) {
-        err.textContent = ex.message;
-        err.classList.remove("hidden");
+        showErr(ex.message);
       }
     });
     document.getElementById("connect-composio-btn")?.addEventListener("click", async () => {
-      const msg = document.getElementById("settings-msg");
-      const err = document.getElementById("settings-err");
-      msg.classList.add("hidden");
-      err.classList.add("hidden");
+      clearFlash();
       try {
         await api("/api/pages/connect-composio", { method: "POST" });
-        msg.textContent = "Connected via Composio (IMADS Agency)";
-        msg.classList.remove("hidden");
+        showMsg("Connected via Composio (IMADS Agency)");
         render();
       } catch (ex) {
-        err.textContent = ex.message;
-        err.classList.remove("hidden");
+        showErr(ex.message);
       }
     });
     document.getElementById("disconnect-btn")?.addEventListener("click", async () => {
@@ -1685,11 +1834,11 @@
     navigator.serviceWorker.getRegistrations().then((regs) => {
       regs.forEach((r) => r.update());
     }).catch(() => {});
-    navigator.serviceWorker.register("/sw.js?v=20260914e").catch(() => {});
+    navigator.serviceWorker.register("/sw.js?v=20260915a").catch(() => {});
     // Drop stale caches from older builds that hid media upload
     if (window.caches) {
       caches.keys().then((keys) =>
-        Promise.all(keys.filter((k) => k !== "messenger-flow-static-v14").map((k) => caches.delete(k)))
+        Promise.all(keys.filter((k) => k !== "messenger-flow-static-v15").map((k) => caches.delete(k)))
       ).catch(() => {});
     }
   }

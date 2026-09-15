@@ -27,11 +27,18 @@ def get_connected_page(db: Session) -> Page:
     page = db.query(Page).filter(Page.is_connected.is_(True)).first()
     if not page:
         raise HTTPException(status_code=400, detail="No connected page. Connect a page first.")
+    from app.security.crypto import decrypt_maybe
+
     settings = get_settings()
-    # Composio path: Page access token optional
-    if settings.uses_composio() or (page.provider or "").lower() == "composio":
+    provider = (page.provider or "").lower()
+    token = decrypt_maybe(page.access_token) if page.access_token else ""
+    # Meta OAuth page with token → Meta Graph is usable
+    if provider == "meta" and token:
         return page
-    if not page.access_token:
+    # Composio path: Page access token optional
+    if settings.uses_composio() or provider == "composio":
+        return page
+    if not token:
         raise HTTPException(
             status_code=400,
             detail="No connected Meta page token. Connect a page or configure Composio.",

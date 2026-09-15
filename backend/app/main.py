@@ -9,7 +9,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from app.api import auth, events, executions, flows, inbox, media, pages, webhook
+from app.api import auth, events, executions, flows, inbox, integrations_facebook, media, pages, webhook
 from app.bootstrap import init_db
 from app.config import get_settings
 
@@ -62,6 +62,7 @@ app.include_router(flows.router)
 app.include_router(executions.router)
 app.include_router(media.router)
 app.include_router(webhook.router)
+app.include_router(integrations_facebook.router)
 app.include_router(events.router)
 
 

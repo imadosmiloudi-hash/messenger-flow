@@ -1175,3 +1175,99 @@ label.check {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* Facebook Connect (Settings) */
+.fb-connect-card .fb-account-card {
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(30, 41, 59, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+.fb-account-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.fb-connected-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.fb-page-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--card-2);
+}
+.fb-page-avatar--ph {
+  display: inline-block;
+  background: linear-gradient(135deg, #1877f2 0%, #0b5fcc 100%);
+}
+.fb-page-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0 14px;
+}
+.fb-page-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.55);
+  cursor: pointer;
+}
+.fb-page-option:has(input:checked) {
+  border-color: rgba(24, 119, 242, 0.65);
+  box-shadow: 0 0 0 1px rgba(24, 119, 242, 0.35);
+}
+.fb-page-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.fb-page-meta strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.settings-advanced {
+  cursor: default;
+}
+.settings-advanced > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.settings-advanced > summary::-webkit-details-marker { display: none; }
+.settings-advanced > summary::before {
+  content: "▸";
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.settings-advanced[open] > summary::before { content: "▾"; }
+.settings-advanced-body {
+  margin-top: 12px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(148, 163, 184, 0.15);
+}
+.settings-advanced-body h3 {
+  font-size: 0.95rem;
+  margin: 0 0 6px;
+}

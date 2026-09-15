@@ -56,10 +56,19 @@ def enqueue_flow_execution(execution_id: str) -> str | None:
 
 
 def _use_composio(page: Page) -> bool:
+    """Prefer Meta Graph when page.provider=meta and a page token is present."""
+    from app.security.crypto import decrypt_maybe
+
+    provider = (page.provider or "").lower()
+    token = decrypt_maybe(page.access_token) if page.access_token else ""
+    if provider == "meta" and token:
+        return False
     settings = get_settings()
+    if provider == "composio" and bool(settings.composio_api_key):
+        return True
     if settings.uses_composio():
         return True
-    return (page.provider or "").lower() == "composio" and bool(settings.composio_api_key)
+    return False
 
 
 def _media_gap_seconds() -> float:
@@ -165,7 +174,10 @@ def run_flow_execution(execution_id: str) -> None:
         if not page:
             _fail(db, execution, "Page missing")
             return
-        if not use_composio and not page.access_token:
+        from app.security.crypto import decrypt_maybe
+
+        page_token = decrypt_maybe(page.access_token) if page.access_token else ""
+        if not use_composio and not page_token:
             _fail(db, execution, "Page token missing")
             return
 
@@ -183,7 +195,7 @@ def run_flow_execution(execution_id: str) -> None:
         if use_composio:
             composio_client = ComposioClient()
         else:
-            meta_client = MetaClient(access_token=page.access_token)
+            meta_client = MetaClient(access_token=page_token)
 
         steps = sorted(flow.steps, key=lambda s: s.position)
         exec_steps = {s.position: s for s in execution.steps}

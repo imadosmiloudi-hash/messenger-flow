@@ -44,3 +44,18 @@ async def receive_webhook(request: Request, db: Session = Depends(get_db)):
     # CRITICAL: only store + notify UI — never send messages here
     result = process_webhook_payload(db, payload)
     return {"ok": True, **result}
+
+
+@router.get("/api/webhooks/facebook")
+def verify_webhook_alias(
+    hub_mode: str | None = Query(None, alias="hub.mode"),
+    hub_verify_token: str | None = Query(None, alias="hub.verify_token"),
+    hub_challenge: str | None = Query(None, alias="hub.challenge"),
+):
+    return verify_webhook(hub_mode=hub_mode, hub_verify_token=hub_verify_token, hub_challenge=hub_challenge)
+
+
+@router.post("/api/webhooks/facebook")
+async def receive_webhook_alias(request: Request, db: Session = Depends(get_db)):
+    return await receive_webhook(request, db)
+

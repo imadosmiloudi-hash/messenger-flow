@@ -127,3 +127,8 @@ class MetaClient:
             f"/{page_id}/subscribed_apps",
             params={"subscribed_fields": subscribed},
         )
+
+    def unsubscribe_app(self, page_id: str) -> dict[str, Any]:
+        """Remove this app from Page subscribed_apps (best-effort on disconnect)."""
+        return self._request("DELETE", f"/{page_id}/subscribed_apps")
+

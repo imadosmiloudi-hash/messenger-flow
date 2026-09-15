@@ -1,5 +1,6 @@
 from app.models.entities import (
     AuditLog,
+    ConnectedAccount,
     Conversation,
     Customer,
     Flow,
@@ -8,6 +9,7 @@ from app.models.entities import (
     FlowStep,
     IncomingMessage,
     MediaAsset,
+    OAuthState,
     Page,
     Setting,
     User,
@@ -16,6 +18,8 @@ from app.models.entities import (
 __all__ = [
     "User",
     "Page",
+    "ConnectedAccount",
+    "OAuthState",
     "Customer",
     "Conversation",
     "IncomingMessage",
