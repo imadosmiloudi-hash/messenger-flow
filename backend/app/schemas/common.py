@@ -264,6 +264,8 @@ class PublicSettingsOut(BaseModel):
     meta_verify_token_hint: str
     public_base_url: str
     webhook_url: str
+    oauth_redirect_uri: str = ""
+    oauth_redirect_host: str = ""
     webhook_never_auto_replies: bool = True
     messaging_provider: str = "meta"
     composio_configured: bool = False

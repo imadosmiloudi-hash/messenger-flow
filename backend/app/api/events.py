@@ -87,13 +87,16 @@ def public_settings(user: User = Depends(get_current_user)):
     settings = get_settings()
     token = settings.meta_verify_token
     hint = (token[:3] + "…" + token[-3:]) if len(token) > 8 else "***"
-    base = settings.public_base_url.rstrip("/")
+    base = settings.canonical_public_base_url.rstrip("/")
+    redirect_uri = settings.resolved_meta_redirect_uri
     return PublicSettingsOut(
         app_name=settings.app_name,
         meta_graph_api_version=settings.meta_graph_api_version,
         meta_verify_token_hint=hint,
         public_base_url=base,
         webhook_url=f"{base}/webhook",
+        oauth_redirect_uri=redirect_uri,
+        oauth_redirect_host=settings.oauth_redirect_host,
         webhook_never_auto_replies=True,
         messaging_provider=settings.messaging_provider or "meta",
         composio_configured=bool(settings.composio_api_key),

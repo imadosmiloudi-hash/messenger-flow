@@ -207,3 +207,163 @@ def test_webhook_alias_verify(client):
     )
     assert r.status_code == 200
     assert r.text == "12345"
+
+
+# --- Redirect URI resolution / production guards ---
+
+
+def test_resolved_redirect_prefers_meta_redirect_uri_origin():
+    from app.config import Settings
+
+    s = Settings(
+        _env_file=None,
+        meta_redirect_uri="https://api-production-22f23.up.railway.app/api/integrations/facebook/callback/",
+        public_base_url="https://wrong.example/",
+        railway_public_domain="ignored.up.railway.app",
+        app_env="development",
+    )
+    assert s.canonical_public_base_url == "https://api-production-22f23.up.railway.app"
+    assert (
+        s.resolved_meta_redirect_uri
+        == "https://api-production-22f23.up.railway.app/api/integrations/facebook/callback"
+    )
+    assert not s.resolved_meta_redirect_uri.endswith("/")
+    assert s.oauth_redirect_host == "api-production-22f23.up.railway.app"
+
+
+def test_resolved_redirect_falls_back_to_public_base_then_railway():
+    from app.config import Settings
+
+    s = Settings(
+        _env_file=None,
+        meta_redirect_uri="",
+        public_base_url="https://api-production-22f23.up.railway.app/",
+        railway_public_domain="",
+        railway_service_web_url="",
+        app_env="development",
+    )
+    assert (
+        s.resolved_meta_redirect_uri
+        == "https://api-production-22f23.up.railway.app/api/integrations/facebook/callback"
+    )
+
+    s2 = Settings(
+        _env_file=None,
+        meta_redirect_uri="",
+        public_base_url="",
+        railway_service_web_url="https://api-production-22f23.up.railway.app",
+        railway_public_domain="other.up.railway.app",
+        app_env="development",
+    )
+    assert s2.canonical_public_base_url == "https://other.up.railway.app"
+
+    s3 = Settings(
+        _env_file=None,
+        meta_redirect_uri="",
+        public_base_url="",
+        railway_service_web_url="",
+        railway_public_domain="api-production-22f23.up.railway.app",
+        app_env="development",
+    )
+    assert s3.canonical_public_base_url == "https://api-production-22f23.up.railway.app"
+
+
+def test_production_rejects_localhost_http_and_placeholder():
+    from app.config import Settings
+
+    local = Settings(
+        _env_file=None,
+        app_env="production",
+        meta_redirect_uri="",
+        public_base_url="http://localhost:8000",
+        railway_public_domain="",
+        railway_service_web_url="",
+    )
+    err = local.production_oauth_redirect_error()
+    assert err is not None
+    assert "PUBLIC_BASE_URL" in err
+    assert "localhost" in err.lower() or "https" in err.lower()
+
+    placeholder = Settings(
+        _env_file=None,
+        app_env="production",
+        meta_redirect_uri="",
+        public_base_url="https://your-ngrok-or-domain.example",
+        railway_public_domain="",
+        railway_service_web_url="",
+    )
+    err2 = placeholder.production_oauth_redirect_error()
+    assert err2 is not None
+    assert "placeholder" in err2.lower()
+
+    ok = Settings(
+        _env_file=None,
+        app_env="production",
+        meta_redirect_uri="https://api-production-22f23.up.railway.app/api/integrations/facebook/callback",
+        public_base_url="https://api-production-22f23.up.railway.app",
+    )
+    assert ok.production_oauth_redirect_error() is None
+
+    # Development still allows localhost defaults
+    dev = Settings(
+        _env_file=None,
+        app_env="development",
+        meta_redirect_uri="",
+        public_base_url="http://localhost:8000",
+    )
+    assert dev.production_oauth_redirect_error() is None
+    assert "localhost" in dev.resolved_meta_redirect_uri
+
+
+def test_connect_authorize_url_encodes_expected_redirect_uri(client, auth_headers):
+    from urllib.parse import parse_qs, quote_plus, urlparse
+
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    expected = get_settings().resolved_meta_redirect_uri
+    assert expected.endswith("/api/integrations/facebook/callback")
+    assert not expected.endswith("/")
+
+    r = client.get("/api/integrations/facebook/connect", headers=auth_headers)
+    assert r.status_code == 200, r.text
+    authorize_url = r.json()["authorize_url"]
+    qs = parse_qs(urlparse(authorize_url).query)
+    assert "redirect_uri" in qs
+    assert qs["redirect_uri"] == [expected]
+    assert f"redirect_uri={quote_plus(expected)}" in authorize_url
+
+
+def test_connect_rejects_invalid_production_redirect(client, auth_headers):
+    from app.config import Settings
+
+    bad = Settings(
+        _env_file=None,
+        app_env="production",
+        meta_app_id="test_app_id",
+        meta_app_secret="test_app_secret",
+        meta_redirect_uri="",
+        public_base_url="http://localhost:8000",
+        railway_public_domain="",
+        railway_service_web_url="",
+    )
+    with patch("app.api.integrations_facebook.get_settings", return_value=bad):
+        r = client.get("/api/integrations/facebook/connect", headers=auth_headers)
+    assert r.status_code == 400
+    detail = r.json()["detail"]
+    assert "PUBLIC_BASE_URL" in detail
+    assert "META_REDIRECT_URI" in detail
+
+
+def test_public_settings_includes_oauth_redirect_fields(client, auth_headers):
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    r = client.get("/api/settings/public", headers=auth_headers)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["oauth_redirect_uri"] == get_settings().resolved_meta_redirect_uri
+    assert data["oauth_redirect_host"] == get_settings().oauth_redirect_host
+    blob = json.dumps(data)
+    assert "meta_app_secret" not in blob.lower()
+    assert "app_secret" not in blob.lower()

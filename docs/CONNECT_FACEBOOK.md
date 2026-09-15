@@ -12,25 +12,53 @@ The **app owner** configures one Meta App once; operators then click **Connect F
 5. Tokens at rest are Fernet-encrypted using a key derived from `SECRET_KEY` (`cryptography`).
 6. Tokens are **never** returned to the frontend.
 
+## Production host (exact values)
+
+There is **no custom domain**. The only public production API origin is:
+
+```
+https://api-production-22f23.up.railway.app
+```
+
+Copy these **exact** values into the Meta App dashboard:
+
+| Meta field | Exact value |
+|------------|-------------|
+| **App Domains** | `api-production-22f23.up.railway.app` |
+| **Valid OAuth Redirect URIs** | `https://api-production-22f23.up.railway.app/api/integrations/facebook/callback` |
+| **Webhook Callback URL** | `https://api-production-22f23.up.railway.app/webhook` |
+
+Railway env (already required for Connect):
+
+```
+PUBLIC_BASE_URL=https://api-production-22f23.up.railway.app
+META_REDIRECT_URI=https://api-production-22f23.up.railway.app/api/integrations/facebook/callback
+```
+
+Do **not** invent alternate hosts. Trailing slashes are normalized by the API; Meta’s Valid OAuth Redirect URI must match the callback URL **without** a trailing slash after `callback`.
+
 ## One-time Meta App owner steps
 
 1. Open [Meta for Developers](https://developers.facebook.com/) → your app (or create one).
-2. Add product **Facebook Login** (and Messenger / Webhooks as needed).
-3. **Facebook Login → Settings → Valid OAuth Redirect URIs**  
-   Add exactly:
+2. Add product **Facebook Login** (Facebook Login for Business / Classic Login as offered). Also add **Messenger** / **Webhooks** if you use Page messaging webhooks.
+3. **Facebook Login → Settings**
+   - **Client OAuth Login**: Yes
+   - **Web OAuth Login**: Yes
+   - **Valid OAuth Redirect URIs** — add exactly:
+     ```
+     https://api-production-22f23.up.railway.app/api/integrations/facebook/callback
+     ```
+4. **Settings → Basic → App Domains** — add exactly:
    ```
-   https://api-production-22f23.up.railway.app/api/integrations/facebook/callback
+   api-production-22f23.up.railway.app
    ```
-   (Or your `META_REDIRECT_URI` / `PUBLIC_BASE_URL` + `/api/integrations/facebook/callback`.)
-4. **App Domains**: add your Railway / public host (e.g. `api-production-22f23.up.railway.app`).
 5. **Webhooks** (Messenger / Page):
    - Callback URL: `https://api-production-22f23.up.railway.app/webhook`  
      (Alias also available: `/api/webhooks/facebook`.)
    - Verify token: value of Railway `META_VERIFY_TOKEN`.
    - Subscribe to `messages` (and related fields as required).
 6. Copy **App ID** → `META_APP_ID`, **App Secret** → `META_APP_SECRET`.
-7. Ensure Railway also has: `PUBLIC_BASE_URL`, `SECRET_KEY`, `REDIS_URL`, `META_VERIFY_TOKEN`.
-   Optional: `META_REDIRECT_URI` (defaults to `PUBLIC_BASE_URL` + `/api/integrations/facebook/callback`).
+7. Ensure Railway also has: `PUBLIC_BASE_URL`, `META_REDIRECT_URI`, `SECRET_KEY`, `REDIS_URL`, `META_VERIFY_TOKEN`.
 8. **Permissions** used by Connect:
    - `pages_show_list`
    - `pages_messaging`
@@ -38,6 +66,10 @@ The **app owner** configures one Meta App once; operators then click **Connect F
    - `pages_read_engagement`
    - `business_management`
 9. **App Review**: for production messaging to customers who are not app roles/testers, submit `pages_messaging` (and related) for App Review. Until approved, only users with a role on the app / Page can fully exercise messaging.
+
+### Why Meta shows “domain not in app domains”
+
+Connect returns HTTP 200 and redirects the browser to Facebook. Meta then validates that the redirect URI’s **host** is listed under **App Domains** and that the **full redirect URI** is listed under **Valid OAuth Redirect URIs**. If either is missing or mistyped (custom domain, `http://`, trailing slash, localhost), Facebook shows a domain / redirect error even though our `/connect` endpoint succeeded.
 
 ## Operator flow (Settings)
 
@@ -54,12 +86,14 @@ The **app owner** configures one Meta App once; operators then click **Connect F
 | `META_APP_ID` | yes | Meta App ID |
 | `META_APP_SECRET` | yes | Meta App Secret |
 | `META_VERIFY_TOKEN` | yes | Webhook verify |
-| `PUBLIC_BASE_URL` | yes | HTTPS API origin |
-| `META_REDIRECT_URI` | optional | Defaults from `PUBLIC_BASE_URL` |
+| `PUBLIC_BASE_URL` | yes (prod) | HTTPS API origin, no trailing slash |
+| `META_REDIRECT_URI` | recommended (prod) | Exact callback URL; defaults from public origin + `/api/integrations/facebook/callback` |
 | `META_OAUTH_SCOPES` | optional | Defaults listed above |
 | `SECRET_KEY` | yes | Fernet key material + JWT |
 | `REDIS_URL` | yes | OAuth state + pending Page select TTL |
 | `META_GRAPH_API_VERSION` | optional | Default `v26.0` |
+
+In production the API **rejects** OAuth connect if the resolved redirect uses `http://`, `localhost`, or placeholders such as `your-ngrok-or-domain.example`.
 
 ## Security notes
 
@@ -67,3 +101,4 @@ The **app owner** configures one Meta App once; operators then click **Connect F
 - Pending Page tokens live in Redis (`oauth:pending_pages:{user_id}`, 30 min) encrypted.
 - Page `access_token` column stores Fernet ciphertext after OAuth select.
 - API `/status` and `/pages` never include token fields.
+- `/api/settings/public` exposes `oauth_redirect_uri` / `oauth_redirect_host` only (no secrets).

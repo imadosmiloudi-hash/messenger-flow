@@ -30,10 +30,10 @@ class PageSelectRequest(BaseModel):
 
 def _settings_redirect(query: dict[str, str]) -> RedirectResponse:
     settings = get_settings()
-    base = (settings.public_base_url or "").rstrip("/") or ""
+    base = (settings.canonical_public_base_url or "").rstrip("/") or ""
     # Prefer same-origin relative redirect for SPA
     qs = urlencode(query)
-    # Absolute if PUBLIC_BASE_URL set (Railway / production)
+    # Absolute if public origin resolved (Railway / production)
     target = f"{base}/settings?{qs}" if base else f"/settings?{qs}"
     return RedirectResponse(url=target, status_code=302)
 
@@ -139,6 +139,16 @@ def facebook_connect(
                 "(see docs/CONNECT_FACEBOOK.md)."
             ),
         )
+    redirect_err = settings.production_oauth_redirect_error()
+    if redirect_err:
+        raise HTTPException(status_code=400, detail=redirect_err)
+
+    # Log only redirect host — never tokens/state/secrets
+    logger.info(
+        "facebook connect authorize redirect_host=%s",
+        settings.oauth_redirect_host or "(unknown)",
+    )
+
     state = fb.create_oauth_state(db, user.id)
     url = fb.build_authorize_url(state)
     db.add(
@@ -147,7 +157,7 @@ def facebook_connect(
             action="facebook.connect_start",
             entity_type="user",
             entity_id=user.id,
-            detail="authorize_url issued",
+            detail=f"authorize_url issued;redirect_host={settings.oauth_redirect_host}",
         )
     )
     db.commit()

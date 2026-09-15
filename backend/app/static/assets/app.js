@@ -1587,6 +1587,7 @@
           <p class="muted" style="margin-top:8px">Verify token hint: ${esc(settings.meta_verify_token_hint)}</p>
           <p class="muted">API version: ${esc(settings.meta_graph_api_version)}</p>
           <p class="muted">PUBLIC_BASE_URL: ${esc(settings.public_base_url)}</p>
+          ${settings.oauth_redirect_host ? `<p class="muted">OAuth redirect host: ${esc(settings.oauth_redirect_host)}</p>` : ""}
           <p class="muted">Messaging provider: ${esc(settings.messaging_provider || "meta")}${settings.composio_configured ? " · Composio configured" : ""}</p>
           <p><span class="badge ok">webhook_never_auto_replies = ${esc(String(settings.webhook_never_auto_replies))}</span></p>
         ` : `
@@ -1834,7 +1835,7 @@
     navigator.serviceWorker.getRegistrations().then((regs) => {
       regs.forEach((r) => r.update());
     }).catch(() => {});
-    navigator.serviceWorker.register("/sw.js?v=20260915a").catch(() => {});
+    navigator.serviceWorker.register("/sw.js?v=20260915b").catch(() => {});
     // Drop stale caches from older builds that hid media upload
     if (window.caches) {
       caches.keys().then((keys) =>
